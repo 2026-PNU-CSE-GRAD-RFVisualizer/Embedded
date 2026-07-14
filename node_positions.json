@@ -1,0 +1,7 @@
+{
+  "node-01": {"pos_x": 1.2, "pos_y": 0.0, "pos_z": 2.4},
+  "node-02": {"pos_x": 0.0, "pos_y": 0.0, "pos_z": 0.0},
+  "node-03": {"pos_x": 0.0, "pos_y": 0.0, "pos_z": 0.0},
+  "node-04": {"pos_x": 0.0, "pos_y": 0.0, "pos_z": 0.0},
+  "gw-01": {"pos_x": 0.0, "pos_y": 0.0, "pos_z": 0.0}
+}

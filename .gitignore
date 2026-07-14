@@ -1,0 +1,22 @@
+# Build outputs
+**/build/
+*.elf
+*.hex
+*.bin
+*.map
+*.exe
+
+# Python cache
+__pycache__/
+*.py[cod]
+
+# IDE and local tool state
+.vscode/
+.settings/
+.agents/
+.codex/
+
+# Generated or machine-local files
+sdkconfig.old
+*.log
+
