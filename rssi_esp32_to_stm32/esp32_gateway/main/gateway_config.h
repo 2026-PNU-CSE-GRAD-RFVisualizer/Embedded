@@ -17,6 +17,9 @@
 #define UART_LINE_QUEUE_LEN         32
 #define UART_LINE_MAX_LEN           128
 #define GATEWAY_STATUS_LINE_ENABLE  0
+#define NODE_REBOOT_ROLLBACK_MIN_MS 3000u
+#define NODE_REBOOT_INITIAL_SEQ_MAX 16u
+#define NODE_COMMUNICATION_TIMEOUT_MS 3000u
 
 /*
  * Set to 1 when only one ESP32 is available.

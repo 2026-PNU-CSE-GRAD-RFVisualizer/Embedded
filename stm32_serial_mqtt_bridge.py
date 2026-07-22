@@ -118,16 +118,26 @@ def attach_position(reading, positions):
         "pos_z": position["pos_z"],
     }
 
-    if "ap_bssid" in reading:
-        positioned["ap_bssid"] = reading["ap_bssid"]
-    if "rssi_raw" in reading:
-        positioned["rssi_raw"] = reading["rssi_raw"]
+    for key in (
+        "ap_bssid",
+        "rssi_raw",
+        "rssi_x10",
+        "age_ms",
+        "valid_age_ms",
+        "valid",
+    ):
+        if key in reading:
+            positioned[key] = reading[key]
 
     positioned["status"] = reading["status"]
     return positioned, node_id in positions
 
 
 def normalize_reading(item, batch_timestamp):
+    # STM32가 보존한 과거 RSSI라도 valid=false이면 위치 계산용 MQTT로 전달하지 않는다.
+    if item.get("valid") is False or item.get("timed_out") is True:
+        return None
+
     node_id = node_name(item["node_id"])
     timestamp = int(item.get("timestamp", item.get("node_ts", batch_timestamp)))
     rssi = int(item["rssi"])
@@ -139,8 +149,17 @@ def normalize_reading(item, batch_timestamp):
         "timestamp": timestamp,
         "rssi": rssi,
         "seq": int(item.get("seq", 0)),
-        "status": 0,
+        "status": int(item.get("status", 0)),
     }
+
+    if "rssi_x10" in item:
+        reading["rssi_x10"] = int(item["rssi_x10"])
+    if "age_ms" in item:
+        reading["age_ms"] = int(item["age_ms"])
+    if "valid_age_ms" in item:
+        reading["valid_age_ms"] = int(item["valid_age_ms"])
+    if "valid" in item:
+        reading["valid"] = bool(item["valid"])
 
     if "rssi_raw" in item:
         reading["rssi_raw"] = int(item["rssi_raw"])
@@ -167,11 +186,23 @@ def normalize_gateway_payload(raw_payload, gateway_id):
             if reading is not None:
                 normalized_readings.append(reading)
 
-        return {
+        normalized = {
             "gateway_id": raw_payload.get("gateway_id", gateway_id),
             "timestamp": timestamp,
             "readings": normalized_readings,
         }
+        for key in (
+            "schema_version",
+            "active_node_count",
+            "rx_count",
+            "accepted_count",
+            "checksum_errors",
+            "format_errors",
+            "uart_overflows",
+        ):
+            if key in raw_payload:
+                normalized[key] = raw_payload[key]
+        return normalized
 
     # Compatibility with the older STM32 payload:
     # {"device_id":...,"nodes":[{"node_id":5,"rssi_filtered_x10":-598,...}]}

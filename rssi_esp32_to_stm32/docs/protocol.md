@@ -63,14 +63,24 @@ Payload example:
 
 ```json
 {
-  "schema_version": 1,
-  "device_id": "stm32-rssi-bridge-01",
-  "uptime_ms": 3605000,
-  "node_count": 4,
-  "nodes": [
-    {"node_id":1,"seq":15234,"age_ms":20,"rssi_raw_dbm":-62,"rssi_filtered_x10":-608,"sample_count":5,"error_flags":0}
+  "schema_version": 2,
+  "gateway_id": "gw-01",
+  "timestamp": 3605000,
+  "active_node_count": 4,
+  "rx_count": 15240,
+  "accepted_count": 15234,
+  "checksum_errors": 0,
+  "format_errors": 0,
+  "uart_overflows": 0,
+  "readings": [
+    {"node_id":"node-01","rssi":-61,"rssi_x10":-608,"rssi_raw":-62,"seq":15234,"age_ms":20,"valid_age_ms":20,"valid":true,"timed_out":false,"status":0}
   ]
 }
 ```
+
+`valid=false` means the latest packet did not contain a usable measurement (for
+example `AP_NOT_FOUND`) or the last valid RSSI is stale. Consumers must not use
+that entry for positioning. `timed_out=true` separately indicates that no packet
+has arrived from the node within the communication timeout.
 
 Actual MQTT publishing is intentionally left outside this module because the STM32 network path is board-specific.

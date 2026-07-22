@@ -46,6 +46,7 @@ set(sources_SRCS
 	${CMAKE_CURRENT_SOURCE_DIR}/Src/rssi_line_parser.c
 	${CMAKE_CURRENT_SOURCE_DIR}/Src/rssi_preprocessor.c
 	${CMAKE_CURRENT_SOURCE_DIR}/Src/mqtt_payload.c
+	${CMAKE_CURRENT_SOURCE_DIR}/Src/uart_rx_ring.c
 )
 
 # Include directories for all compilers
