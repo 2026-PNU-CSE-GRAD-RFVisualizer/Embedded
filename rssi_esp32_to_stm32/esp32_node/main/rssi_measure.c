@@ -12,8 +12,11 @@
 #include "node_config.h"
 
 static const char *TAG = "rssi_measure";
+#if TARGET_AP_USE_BSSID
 static const uint8_t k_target_bssid[6] = TARGET_AP_BSSID;
+#else
 static const uint8_t k_target_ssid[] = TARGET_AP_SSID;
+#endif
 
 esp_err_t rssi_measure_init_wifi(void)
 {
@@ -65,8 +68,10 @@ esp_err_t rssi_measure_scan_target(int8_t *out_rssi_dbm)
     uint16_t record_count = (ap_count > 16) ? 16 : ap_count;
     ESP_RETURN_ON_ERROR(esp_wifi_scan_get_ap_records(&record_count, records), TAG, "get ap records failed");
 
+#if !TARGET_AP_USE_BSSID
     int found = 0;
     int8_t strongest_rssi = -127;
+#endif
     for (uint16_t i = 0; i < record_count; ++i) {
 #if TARGET_AP_USE_BSSID
         if (memcmp(records[i].bssid, k_target_bssid, sizeof(k_target_bssid)) == 0) {

@@ -8,8 +8,11 @@
 #include "gateway_config.h"
 
 static const char *TAG = "gateway_rssi";
+#if TARGET_AP_USE_BSSID
 static const uint8_t k_target_bssid[6] = TARGET_AP_BSSID;
+#else
 static const uint8_t k_target_ssid[] = TARGET_AP_SSID;
+#endif
 
 static int16_t s_samples[GATEWAY_RSSI_FILTER_WINDOW];
 static uint8_t s_sample_count;

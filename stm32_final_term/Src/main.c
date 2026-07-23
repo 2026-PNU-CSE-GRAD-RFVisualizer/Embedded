@@ -12,7 +12,6 @@
 #include "mqtt_payload.h"
 #include "rssi_line_parser.h"
 #include "rssi_preprocessor.h"
-#include "uart_rx_ring.h"
 
 #define PERIPH_BASE             0x40000000UL
 #define APB2PERIPH_BASE         (PERIPH_BASE + 0x10000UL)
@@ -58,7 +57,6 @@
 
 #define HSI_CLOCK_HZ            8000000UL
 #define USART1_BAUDRATE         115200UL
-#define SNAPSHOT_PERIOD_MS      1000UL
 
 volatile uint32_t g_ms_ticks;
 volatile uint32_t g_uart_rx_count;
@@ -71,7 +69,7 @@ volatile int g_latest_mqtt_payload_len;
 char g_mqtt_payload[MQTT_PAYLOAD_MAX_LEN];
 
 static rssi_preprocessor_t s_rssi_ctx;
-static uart_rx_ring_t s_uart_rx_ring;
+static volatile bool s_payload_dirty;
 
 void SystemInit(void)
 {
@@ -122,25 +120,18 @@ void USART1_IRQHandler(void)
 {
     if ((USART1_SR & USART_SR_RXNE) != 0UL) {
         uint8_t byte = (uint8_t)(USART1_DR & 0xFFU);
-        g_uart_rx_count++;
-        /* ISR에서는 바이트 저장만 하고 문자열 파싱은 Main Loop로 넘긴다. */
-        (void)uart_rx_ring_push_isr(&s_uart_rx_ring, byte);
-    }
-}
-
-static void process_uart_rx(void)
-{
-    /* 파서와 노드 테이블을 Main Context에서만 다뤄 JSON 생성과의 경쟁을 막는다. */
-    uint8_t byte;
-    while (uart_rx_ring_pop(&s_uart_rx_ring, &byte)) {
         rssi_measurement_t measurement;
-        rssi_parse_result_t result = rssi_parser_feed_byte(byte, &measurement);
+        rssi_parse_result_t result;
+
+        g_uart_rx_count++;
+        result = rssi_parser_feed_byte(byte, &measurement);
         g_last_parse_result = (uint32_t)result;
 
         if (result == RSSI_PARSE_OK) {
             g_latest_measurement = measurement;
             g_parse_ok_count++;
             (void)rssi_preprocessor_update(&s_rssi_ctx, &measurement, millis());
+            s_payload_dirty = true;
         } else if (result == RSSI_PARSE_CHECKSUM_ERROR) {
             g_checksum_error_count++;
             s_rssi_ctx.checksum_error_count++;
@@ -149,9 +140,6 @@ static void process_uart_rx(void)
             s_rssi_ctx.format_error_count++;
         }
     }
-
-    s_rssi_ctx.uart_overflow_count =
-        uart_rx_ring_overflow_count(&s_uart_rx_ring);
 }
 
 int __io_putchar(int ch)
@@ -166,28 +154,21 @@ int main(void)
 {
     rssi_parser_init();
     rssi_preprocessor_init(&s_rssi_ctx);
-    uart_rx_ring_init(&s_uart_rx_ring);
     systick_init();
     usart1_init_115200();
 
     printf("STM32 RSSI receiver ready\r\n");
 
-    uint32_t last_snapshot_ms = millis();
     for (;;) {
-        process_uart_rx();
+        rssi_preprocessor_update_timeouts(&s_rssi_ctx, millis());
 
-        uint32_t now_ms = millis();
-        rssi_preprocessor_update_timeouts(&s_rssi_ctx, now_ms);
-
-        /* 입력 패킷마다 출력하지 않고 1초 Snapshot으로 UART 대역폭을 제한한다. */
-        if (s_rssi_ctx.total_packet_rx_count > 0u &&
-            (now_ms - last_snapshot_ms) >= SNAPSHOT_PERIOD_MS) {
-            last_snapshot_ms = now_ms;
+        if (s_payload_dirty) {
+            s_payload_dirty = false;
             g_latest_mqtt_payload_len = mqtt_payload_build_snapshot(g_mqtt_payload,
                                                                     sizeof(g_mqtt_payload),
                                                                     "gw-01",
                                                                     &s_rssi_ctx,
-                                                                    now_ms);
+                                                                    millis());
             if (g_latest_mqtt_payload_len > 0) {
                 printf("%s\r\n", g_mqtt_payload);
             }

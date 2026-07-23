@@ -51,38 +51,25 @@ int mqtt_payload_build_snapshot(char *out,
     }
 
     size_t offset = 0;
+
     if (append_text(out,
                     out_len,
                     &offset,
-                    "{\"schema_version\":2,\"gateway_id\":\"%s\",\"timestamp\":%lu,"
-                    "\"active_node_count\":%u,\"rx_count\":%lu,\"accepted_count\":%lu,"
-                    "\"checksum_errors\":%lu,\"format_errors\":%lu,\"uart_overflows\":%lu,"
-                    "\"readings\":[",
+                    "{\"gateway_id\":\"%s\",\"timestamp\":%lu,\"readings\":[",
                     gateway_id,
-                    (unsigned long)now_ms,
-                    rssi_preprocessor_active_count(ctx),
-                    (unsigned long)ctx->total_packet_rx_count,
-                    (unsigned long)ctx->total_accepted_count,
-                    (unsigned long)ctx->checksum_error_count,
-                    (unsigned long)ctx->format_error_count,
-                    (unsigned long)ctx->uart_overflow_count) != 0) {
+                    (unsigned long)now_ms) != 0) {
         return -1;
     }
 
     uint8_t emitted = 0;
     for (uint8_t i = 0; i < RSSI_MAX_NODES; ++i) {
         const stm32_node_state_t *node = &ctx->nodes[i];
-        if (!node->active) {
+        if (!node->active || node->timed_out) {
             continue;
         }
 
-        uint32_t age_ms = now_ms - node->last_packet_rx_ms;
-        /* 정상값이 한 번도 없으면 UINT32_MAX를 명시적인 age sentinel로 사용한다. */
-        uint32_t valid_age_ms = node->has_valid_rssi
-            ? now_ms - node->last_valid_update_ms
-            : UINT32_MAX;
-        bool valid = rssi_preprocessor_node_rssi_valid(node);
-
+        uint32_t age_ms = now_ms - node->last_update_ms;
+        (void)age_ms;
         if (append_text(out,
                         out_len,
                         &offset,
@@ -95,33 +82,14 @@ int mqtt_payload_build_snapshot(char *out,
             return -1;
         }
 
-        /* 기존 정수 rssi는 유지하고 정밀한 고정소수점 rssi_x10을 함께 제공한다. */
         if (append_text(out,
                         out_len,
                         &offset,
-                        ",\"rssi\":%d,\"rssi_x10\":%d,\"rssi_raw\":%d,"
-                        "\"seq\":%lu,\"age_ms\":%lu,\"valid_age_ms\":%lu,"
-                        "\"valid\":%s,\"timed_out\":%s,\"status\":%u,"
-                        "\"rx_count\":%lu,\"accepted_count\":%lu,\"valid_count\":%lu,"
-                        "\"invalid_count\":%lu,\"lost_count\":%lu,\"duplicate_count\":%lu,"
-                        "\"out_of_order_count\":%lu,\"reboot_count\":%lu}",
+                        ",\"rssi\":%d,\"seq\":%lu,\"rssi_raw\":%d,\"status\":%u}",
                         filtered_rssi_dbm(node->last_filtered_x10),
-                        node->last_filtered_x10,
-                        node->last_raw_rssi,
                         (unsigned long)node->last_seq,
-                        (unsigned long)age_ms,
-                        (unsigned long)valid_age_ms,
-                        valid ? "true" : "false",
-                        node->communication_timed_out ? "true" : "false",
-                        node->error_flags,
-                        (unsigned long)node->packet_rx_count,
-                        (unsigned long)node->accepted_count,
-                        (unsigned long)node->valid_count,
-                        (unsigned long)node->invalid_count,
-                        (unsigned long)node->lost_count,
-                        (unsigned long)node->duplicate_count,
-                        (unsigned long)node->out_of_order_count,
-                        (unsigned long)node->reboot_count) != 0) {
+                        node->last_raw_rssi,
+                        node->error_flags) != 0) {
             return -1;
         }
         emitted++;

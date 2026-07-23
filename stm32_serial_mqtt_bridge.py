@@ -2,6 +2,7 @@ import argparse
 import json
 import sys
 import time
+import traceback
 from pathlib import Path
 
 import paho.mqtt.client as mqtt
@@ -13,7 +14,7 @@ except ImportError:
     raise
 
 
-DEFAULT_SERVER_IP = "192.168.0.30"
+DEFAULT_SERVER_IP = "192.168.0.4"
 DEFAULT_PORT = 1883
 DEFAULT_SERIAL_PORT = "COM4"
 DEFAULT_BAUDRATE = 115200
@@ -21,6 +22,10 @@ DEFAULT_GATEWAY_ID = "gw-01"
 DEFAULT_PUBLISH_MODE = "individual"
 DEFAULT_POSITIONS_FILE = Path(__file__).with_name("node_positions.json")
 DEFAULT_POSITION = {"pos_x": 0.0, "pos_y": 0.0, "pos_z": 0.0}
+PUBLISH_TIMEOUT_SEC = 5.0
+PUBLISH_RETRY_COUNT = 3
+RECONNECT_DELAY_SEC = 2.0
+HEARTBEAT_INTERVAL_SEC = 10.0
 
 
 def parse_args():
@@ -32,7 +37,7 @@ def parse_args():
     parser.add_argument("--serial-port", default=DEFAULT_SERIAL_PORT)
     parser.add_argument("--baudrate", type=int, default=DEFAULT_BAUDRATE)
     parser.add_argument("--gateway-id", default=DEFAULT_GATEWAY_ID)
-    parser.add_argument("--client-id", default="gw-01")
+    parser.add_argument("--client-id", default="stm32-serial-gw-01")
     parser.add_argument("--topic", default=None)
     parser.add_argument("--positions-file", default=str(DEFAULT_POSITIONS_FILE))
     parser.add_argument(
@@ -67,13 +72,28 @@ def filtered_dbm_from_x10(value):
     return int((value - 5) / 10)
 
 
-def publish_checked(client, topic, payload, qos=1, retain=False):
+def publish_checked(client, topic, payload, qos=1, retain=False, retries=PUBLISH_RETRY_COUNT):
     text = json.dumps(payload, separators=(",", ":"))
-    info = client.publish(topic, text, qos=qos, retain=retain)
-    info.wait_for_publish()
-    if info.rc != mqtt.MQTT_ERR_SUCCESS:
-        raise RuntimeError(f"publish failed topic={topic} rc={info.rc}")
-    return text
+    last_error = "unknown error"
+
+    for attempt in range(1, retries + 1):
+        info = client.publish(topic, text, qos=qos, retain=retain)
+        if info.rc != mqtt.MQTT_ERR_SUCCESS:
+            last_error = f"rc={info.rc}"
+        else:
+            try:
+                info.wait_for_publish(timeout=PUBLISH_TIMEOUT_SEC)
+                if info.is_published():
+                    return text
+                last_error = f"PUBACK timeout after {PUBLISH_TIMEOUT_SEC:.0f}s"
+            except RuntimeError as exc:
+                last_error = str(exc)
+
+        if attempt < retries:
+            print(f"publish retry {attempt}/{retries} topic={topic}: {last_error}")
+            time.sleep(1.0)
+
+    raise RuntimeError(f"publish failed topic={topic}: {last_error}")
 
 
 def status_payload(gateway_id, online):
@@ -118,26 +138,16 @@ def attach_position(reading, positions):
         "pos_z": position["pos_z"],
     }
 
-    for key in (
-        "ap_bssid",
-        "rssi_raw",
-        "rssi_x10",
-        "age_ms",
-        "valid_age_ms",
-        "valid",
-    ):
-        if key in reading:
-            positioned[key] = reading[key]
+    if "ap_bssid" in reading:
+        positioned["ap_bssid"] = reading["ap_bssid"]
+    if "rssi_raw" in reading:
+        positioned["rssi_raw"] = reading["rssi_raw"]
 
     positioned["status"] = reading["status"]
     return positioned, node_id in positions
 
 
 def normalize_reading(item, batch_timestamp):
-    # STM32가 보존한 과거 RSSI라도 valid=false이면 위치 계산용 MQTT로 전달하지 않는다.
-    if item.get("valid") is False or item.get("timed_out") is True:
-        return None
-
     node_id = node_name(item["node_id"])
     timestamp = int(item.get("timestamp", item.get("node_ts", batch_timestamp)))
     rssi = int(item["rssi"])
@@ -149,17 +159,8 @@ def normalize_reading(item, batch_timestamp):
         "timestamp": timestamp,
         "rssi": rssi,
         "seq": int(item.get("seq", 0)),
-        "status": int(item.get("status", 0)),
+        "status": 0,
     }
-
-    if "rssi_x10" in item:
-        reading["rssi_x10"] = int(item["rssi_x10"])
-    if "age_ms" in item:
-        reading["age_ms"] = int(item["age_ms"])
-    if "valid_age_ms" in item:
-        reading["valid_age_ms"] = int(item["valid_age_ms"])
-    if "valid" in item:
-        reading["valid"] = bool(item["valid"])
 
     if "rssi_raw" in item:
         reading["rssi_raw"] = int(item["rssi_raw"])
@@ -186,23 +187,11 @@ def normalize_gateway_payload(raw_payload, gateway_id):
             if reading is not None:
                 normalized_readings.append(reading)
 
-        normalized = {
+        return {
             "gateway_id": raw_payload.get("gateway_id", gateway_id),
             "timestamp": timestamp,
             "readings": normalized_readings,
         }
-        for key in (
-            "schema_version",
-            "active_node_count",
-            "rx_count",
-            "accepted_count",
-            "checksum_errors",
-            "format_errors",
-            "uart_overflows",
-        ):
-            if key in raw_payload:
-                normalized[key] = raw_payload[key]
-        return normalized
 
     # Compatibility with the older STM32 payload:
     # {"device_id":...,"nodes":[{"node_id":5,"rssi_filtered_x10":-598,...}]}
@@ -227,10 +216,13 @@ def normalize_gateway_payload(raw_payload, gateway_id):
                 "timestamp": timestamp,
                 "rssi": rssi,
                 "seq": int(item.get("seq", 0)),
-                "status": 0,
+                "status": int(item.get("error_flags", item.get("status", 0))),
             }
             if "rssi_raw_dbm" in item:
                 reading["rssi_raw"] = int(item["rssi_raw_dbm"])
+            for field in ("sample_count", "lost_count", "duplicate_count", "age_ms"):
+                if field in item:
+                    reading[field] = int(item[field])
             readings.append(reading)
 
         return {
@@ -252,8 +244,11 @@ def main():
         raise SystemExit(f"positions config error: {exc}") from exc
 
     warned_missing_positions = set()
+    last_published_seq = {}
+    last_heartbeat_at = 0.0
 
     client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=args.client_id)
+    client.reconnect_delay_set(min_delay=1, max_delay=10)
     client.will_set(
         status_topic,
         json.dumps(status_payload(args.gateway_id, online=False), separators=(",", ":")),
@@ -261,65 +256,136 @@ def main():
         retain=True,
     )
 
-    print(f"connecting mqtt {args.server}:{args.port} ...")
-    client.connect(args.server, args.port, keepalive=30)
-    client.loop_start()
-    publish_checked(client, status_topic, status_payload(args.gateway_id, online=True), qos=1, retain=True)
+    def on_connect(connected_client, _userdata, _flags, reason_code, _properties):
+        if getattr(reason_code, "is_failure", False):
+            print(f"mqtt connection failed: {reason_code}")
+            return
+
+        connected_client.publish(
+            status_topic,
+            json.dumps(status_payload(args.gateway_id, online=True), separators=(",", ":")),
+            qos=1,
+            retain=True,
+        )
+        print(f"mqtt connected: client_id={args.client_id}")
+
+    def on_disconnect(_client, _userdata, _disconnect_flags, reason_code, _properties):
+        if getattr(reason_code, "is_failure", False):
+            print(f"mqtt disconnected unexpectedly: {reason_code}; reconnecting...")
+
+    client.on_connect = on_connect
+    client.on_disconnect = on_disconnect
 
     print(f"opening serial {args.serial_port} @ {args.baudrate} ...")
     with serial.Serial(args.serial_port, args.baudrate, timeout=1) as ser:
+        print(f"connecting mqtt {args.server}:{args.port} ...")
+        client.connect(args.server, args.port, keepalive=30)
+        client.loop_start()
+
         if args.publish_mode in ("gateway", "both"):
             print(f"gateway batch topic: {data_topic}")
         if args.publish_mode in ("individual", "both"):
             print("individual topics: rssi/<node_id>")
 
-        while True:
-            raw = ser.readline()
-            if not raw:
-                continue
+        try:
+            while True:
+                now = time.monotonic()
+                if now - last_heartbeat_at >= HEARTBEAT_INTERVAL_SEC:
+                    try:
+                        publish_checked(
+                            client,
+                            status_topic,
+                            status_payload(args.gateway_id, online=True),
+                            qos=1,
+                            retain=True,
+                        )
+                        last_heartbeat_at = now
+                        print(f"heartbeat {status_topic}: online")
+                    except RuntimeError as exc:
+                        print(f"heartbeat error: {exc}")
 
-            line = raw.decode("utf-8", errors="replace").strip()
-            if not line:
-                continue
+                raw = ser.readline()
+                if not raw:
+                    continue
 
-            if not line.startswith("{"):
-                print("skip:", line)
-                continue
+                line = raw.decode("utf-8", errors="replace").strip()
+                if not line:
+                    continue
 
-            try:
-                raw_payload = json.loads(line)
-                payload = normalize_gateway_payload(raw_payload, args.gateway_id)
-            except (json.JSONDecodeError, ValueError, TypeError) as exc:
-                print(f"bad payload: {exc}: {line}")
-                continue
+                if not line.startswith("{"):
+                    print("skip:", line)
+                    continue
 
-            if not payload["readings"]:
-                print("skip: payload has no valid readings")
-                continue
+                try:
+                    raw_payload = json.loads(line)
+                    payload = normalize_gateway_payload(raw_payload, args.gateway_id)
+                except (json.JSONDecodeError, ValueError, TypeError) as exc:
+                    print(f"bad payload: {exc}: {line}")
+                    continue
 
-            positioned_readings = []
-            for reading in payload["readings"]:
-                positioned, position_found = attach_position(reading, positions)
-                positioned_readings.append(positioned)
-                if not position_found and reading["node_id"] not in warned_missing_positions:
-                    warned_missing_positions.add(reading["node_id"])
-                    print(f"warning: {reading['node_id']} position missing; using 0,0,0")
-            payload["readings"] = positioned_readings
+                if not payload["readings"]:
+                    print("skip: payload has no valid readings")
+                    continue
 
-            if args.publish_mode in ("gateway", "both"):
-                sent = publish_checked(client, data_topic, payload, qos=1)
-                print(f"sent {data_topic}:", sent)
-
-            if args.publish_mode in ("individual", "both"):
+                positioned_readings = []
                 for reading in payload["readings"]:
-                    topic = f"rssi/{reading['node_id']}"
-                    sent = publish_checked(client, topic, reading, qos=1)
-                    print(f"sent {topic}:", sent)
+                    positioned, position_found = attach_position(reading, positions)
+                    positioned_readings.append(positioned)
+                    if not position_found and reading["node_id"] not in warned_missing_positions:
+                        warned_missing_positions.add(reading["node_id"])
+                        print(f"warning: {reading['node_id']} position missing; using 0,0,0")
+                payload["readings"] = positioned_readings
+
+                if args.publish_mode in ("gateway", "both"):
+                    try:
+                        sent = publish_checked(client, data_topic, payload, qos=1)
+                        print(f"sent {data_topic}:", sent)
+                    except RuntimeError as exc:
+                        print(f"publish error: {exc}")
+
+                if args.publish_mode in ("individual", "both"):
+                    for reading in payload["readings"]:
+                        node_id = reading["node_id"]
+                        seq = reading.get("seq")
+                        if seq is not None and last_published_seq.get(node_id) == seq:
+                            continue
+
+                        topic = f"rssi/{reading['node_id']}"
+                        try:
+                            sent = publish_checked(client, topic, reading, qos=1)
+                        except RuntimeError as exc:
+                            print(f"publish error: {exc}")
+                            continue
+
+                        if seq is not None:
+                            last_published_seq[node_id] = seq
+                        print(f"sent {topic}:", sent)
+        finally:
+            if client.is_connected():
+                try:
+                    publish_checked(
+                        client,
+                        status_topic,
+                        status_payload(args.gateway_id, online=False),
+                        qos=1,
+                        retain=True,
+                        retries=1,
+                    )
+                except RuntimeError as exc:
+                    print(f"failed to publish offline status: {exc}")
+                client.disconnect()
+            client.loop_stop()
 
 
 if __name__ == "__main__":
-    try:
-        main()
-    except KeyboardInterrupt:
-        print("stopping...")
-        sys.exit(0)
+    while True:
+        try:
+            main()
+        except KeyboardInterrupt:
+            print("stopping...")
+            sys.exit(0)
+        except (serial.SerialException, mqtt.MQTTException, OSError) as exc:
+            print(f"bridge transport error: {exc}")
+            traceback.print_exc()
+            print(f"retrying bridge in {RECONNECT_DELAY_SEC:.0f}s...")
+            time.sleep(RECONNECT_DELAY_SEC)

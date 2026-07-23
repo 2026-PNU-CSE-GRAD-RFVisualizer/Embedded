@@ -6,7 +6,7 @@
 
 #include "rssi_preprocessor.h"
 
-#define MQTT_PAYLOAD_MAX_LEN    4096
+#define MQTT_PAYLOAD_MAX_LEN    768
 
 int mqtt_payload_build_snapshot(char *out,
                                 size_t out_len,

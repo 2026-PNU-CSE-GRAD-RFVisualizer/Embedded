@@ -1,7 +1,6 @@
 #include "rssi_line_parser.h"
 #include "rssi_preprocessor.h"
 #include "mqtt_payload.h"
-#include "uart_rx_ring.h"
 
 /*
  * Integration example for STM32 HAL projects.
@@ -16,7 +15,6 @@
 extern UART_HandleTypeDef huart1;
 
 static uint8_t s_uart_rx_byte;
-static uart_rx_ring_t s_uart_rx_ring;
 static rssi_preprocessor_t s_rssi_ctx;
 static char s_mqtt_payload[MQTT_PAYLOAD_MAX_LEN];
 
@@ -24,44 +22,30 @@ void RssiReceiver_Init(void)
 {
     rssi_parser_init();
     rssi_preprocessor_init(&s_rssi_ctx);
-    uart_rx_ring_init(&s_uart_rx_ring);
     HAL_UART_Receive_IT(&huart1, &s_uart_rx_byte, 1);
 }
 
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 {
     if (huart == &huart1) {
-        /* HAL Callback에서도 파싱하지 않고 바이트만 저장해 ISR 시간을 제한한다. */
-        (void)uart_rx_ring_push_isr(&s_uart_rx_ring, s_uart_rx_byte);
-        HAL_UART_Receive_IT(&huart1, &s_uart_rx_byte, 1);
-    }
-}
-
-/* Call this frequently from the main loop or a low-priority task. */
-void RssiReceiver_Process(void)
-{
-    /* Main Loop 또는 전용 Task에서 호출해 Parser와 상태 테이블을 한 Context에서 다룬다. */
-    uint8_t byte;
-    while (uart_rx_ring_pop(&s_uart_rx_ring, &byte)) {
         rssi_measurement_t measurement;
-        rssi_parse_result_t result = rssi_parser_feed_byte(byte, &measurement);
+        rssi_parse_result_t result = rssi_parser_feed_byte(s_uart_rx_byte, &measurement);
+        uint32_t now_ms = HAL_GetTick();
 
         if (result == RSSI_PARSE_OK) {
-            (void)rssi_preprocessor_update(&s_rssi_ctx, &measurement, HAL_GetTick());
+            (void)rssi_preprocessor_update(&s_rssi_ctx, &measurement, now_ms);
         } else if (result == RSSI_PARSE_CHECKSUM_ERROR) {
             s_rssi_ctx.checksum_error_count++;
         } else if (result == RSSI_PARSE_FORMAT_ERROR) {
             s_rssi_ctx.format_error_count++;
         }
-    }
 
-    s_rssi_ctx.uart_overflow_count =
-        uart_rx_ring_overflow_count(&s_uart_rx_ring);
+        HAL_UART_Receive_IT(&huart1, &s_uart_rx_byte, 1);
+    }
 }
 
 void RssiReceiver_Periodic_1s(void)
 {
-    RssiReceiver_Process();
     uint32_t now_ms = HAL_GetTick();
     rssi_preprocessor_update_timeouts(&s_rssi_ctx, now_ms);
 

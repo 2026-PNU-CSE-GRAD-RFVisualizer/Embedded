@@ -43,25 +43,12 @@ static int hex_value(char ch)
 
 static int parse_u32(const char *text, uint32_t *out)
 {
-    if (text == NULL || out == NULL || text[0] == '\0') {
+    char *end = NULL;
+    unsigned long value = strtoul(text, &end, 10);
+    if (end == text || *end != '\0' || value > 0xFFFFFFFFul) {
         return 0;
     }
-
-    /* strtoul은 "-1"도 unsigned 값으로 받아들일 수 있어 숫자를 직접 검증한다. */
-    uint32_t value = 0u;
-    for (const char *cursor = text; *cursor != '\0'; ++cursor) {
-        if (!isdigit((unsigned char)*cursor)) {
-            return 0;
-        }
-
-        uint32_t digit = (uint32_t)(*cursor - '0');
-        if (value > (UINT32_MAX - digit) / 10u) {
-            return 0;
-        }
-        value = value * 10u + digit;
-    }
-
-    *out = value;
+    *out = (uint32_t)value;
     return 1;
 }
 

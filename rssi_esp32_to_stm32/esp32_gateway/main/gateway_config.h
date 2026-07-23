@@ -3,9 +3,9 @@
 
 #define ESPNOW_WIFI_CHANNEL         6
 #define TARGET_AP_CHANNEL           ESPNOW_WIFI_CHANNEL
-#define TARGET_AP_USE_BSSID         0
-#define TARGET_AP_SSID              "U1MU2_2F"
-#define TARGET_AP_BSSID             {0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF}
+#define TARGET_AP_USE_BSSID         1
+#define TARGET_AP_SSID              "바부바부쟝"
+#define TARGET_AP_BSSID             {0xB0, 0x38, 0x6C, 0x52, 0xBA, 0xFE}
 
 #define STM32_UART_NUM              UART_NUM_1
 #define STM32_UART_BAUDRATE         115200
@@ -17,9 +17,6 @@
 #define UART_LINE_QUEUE_LEN         32
 #define UART_LINE_MAX_LEN           128
 #define GATEWAY_STATUS_LINE_ENABLE  0
-#define NODE_REBOOT_ROLLBACK_MIN_MS 3000u
-#define NODE_REBOOT_INITIAL_SEQ_MAX 16u
-#define NODE_COMMUNICATION_TIMEOUT_MS 3000u
 
 /*
  * Set to 1 when only one ESP32 is available.
