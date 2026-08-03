@@ -152,8 +152,6 @@ Copy these files into the STM32 project:
 - `stm32_receiver/rssi_preprocessor.h`
 - `stm32_receiver/mqtt_payload.c`
 - `stm32_receiver/mqtt_payload.h`
-- `stm32_receiver/uart_rx_ring.c`
-- `stm32_receiver/uart_rx_ring.h`
 
 Use `stm32_uart_receiver_example.c` as a HAL UART interrupt integration example.
 
@@ -165,7 +163,7 @@ On a PC with a C compiler:
 
 ```bash
 cd stm32_receiver
-gcc -std=c99 -Wall -Wextra -pedantic rssi_line_parser.c rssi_preprocessor.c mqtt_payload.c uart_rx_ring.c test_parser_host.c -o test_parser_host
+gcc -std=c99 -Wall -Wextra -pedantic rssi_line_parser.c rssi_preprocessor.c mqtt_payload.c test_parser_host.c -o test_parser_host
 ./test_parser_host
 ```
 

@@ -3,7 +3,7 @@
 
 #include <stdint.h>
 
-#define NODE_ID                         3
+#define NODE_ID                         4
 #define ESPNOW_WIFI_CHANNEL             6
 #define TARGET_AP_CHANNEL               ESPNOW_WIFI_CHANNEL
 #define TARGET_AP_USE_BSSID             1

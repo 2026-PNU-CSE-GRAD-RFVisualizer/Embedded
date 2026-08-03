@@ -171,6 +171,8 @@ int main(void)
                                                                     millis());
             if (g_latest_mqtt_payload_len > 0) {
                 printf("%s\r\n", g_mqtt_payload);
+            } else {
+                printf("ERR mqtt payload build failed\r\n");
             }
         }
     }
