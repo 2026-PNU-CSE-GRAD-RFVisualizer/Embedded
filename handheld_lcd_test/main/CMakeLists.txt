@@ -6,5 +6,3 @@ idf_component_register(
     REQUIRES
         esp_driver_gpio
 )
-
-target_add_binary_data(${COMPONENT_LIB} "testimage.rgb565" BINARY)

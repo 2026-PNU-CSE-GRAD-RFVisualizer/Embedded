@@ -24,7 +24,29 @@
 
 static const char *TAG = "lcd_gpio";
 static bool initialized;
-static bool use_rgb888_packing;
+
+/*
+ * This panel revision keeps consuming three 8-bit colour components even
+ * after a 0x55 COLMOD write. On a 16-bit 8080 bus, two RGB666 pixels are
+ * transferred as three 16-bit words.
+ */
+static inline uint8_t rgb565_red8(uint16_t color)
+{
+    const uint8_t r5 = (color >> 11) & 0x1F;
+    return (uint8_t)(((r5 << 3) | (r5 >> 2)) & 0xFC);
+}
+
+static inline uint8_t rgb565_green8(uint16_t color)
+{
+    const uint8_t g6 = (color >> 5) & 0x3F;
+    return (uint8_t)(((g6 << 2) | (g6 >> 4)) & 0xFC);
+}
+
+static inline uint8_t rgb565_blue8(uint16_t color)
+{
+    const uint8_t b5 = color & 0x1F;
+    return (uint8_t)(((b5 << 3) | (b5 >> 2)) & 0xFC);
+}
 
 static esp_err_t configure_data_bus(gpio_mode_t mode)
 {
@@ -48,26 +70,35 @@ static inline void pulse_write(uint16_t value)
 {
     set_data_bus(value);
     /* Conservative setup/hold times for a Dupont-wire breadboard test. */
-    esp_rom_delay_us(1);
+    esp_rom_delay_us(2);
     GPIO.out_w1tc = LCD_WR_MASK;
-    esp_rom_delay_us(1);
+    esp_rom_delay_us(2);
     GPIO.out_w1ts = LCD_WR_MASK;
+    /* Keep data and D/C stable after the rising edge that latches the word. */
+    esp_rom_delay_us(2);
 }
 
 static void write_command(uint16_t command)
 {
-    gpio_set_level(LCD_PIN_CS, 0);
     gpio_set_level(LCD_PIN_DC, 0);
+    gpio_set_level(LCD_PIN_CS, 0);
     pulse_write(command);
     gpio_set_level(LCD_PIN_CS, 1);
 }
 
 static void write_reg(uint16_t reg, uint8_t value)
 {
-    gpio_set_level(LCD_PIN_CS, 0);
-    gpio_set_level(LCD_PIN_DC, 0);
-    pulse_write(reg);
+    /*
+     * Match the Waveshare FSMC example exactly: its LCD_REG and LCD_RAM
+     * stores are two independent bus accesses, so CS rises between the
+     * command/address cycle and the data cycle.  Keeping CS asserted across
+     * both cycles left this panel's extended registers at their reset values
+     * (notably B500=0, the 480x640 gate setting).
+     */
+    write_command(reg);
+
     gpio_set_level(LCD_PIN_DC, 1);
+    gpio_set_level(LCD_PIN_CS, 0);
     pulse_write((uint16_t)value);
     gpio_set_level(LCD_PIN_CS, 1);
 }
@@ -79,35 +110,35 @@ static void write_regs(uint16_t first_reg, const uint8_t *values, size_t count)
     }
 }
 
-static void read_reg_with_dummy(uint16_t reg, uint16_t *dummy,
-                                uint16_t *value)
+static void read_reg_words(uint16_t reg, uint16_t *values, size_t count)
 {
-    gpio_set_level(LCD_PIN_CS, 0);
-    gpio_set_level(LCD_PIN_DC, 0);
-    pulse_write(reg);
+    write_command(reg);
 
     ESP_ERROR_CHECK(configure_data_bus(GPIO_MODE_INPUT));
     gpio_set_level(LCD_PIN_DC, 1);
 
-    /*
-     * NT35510 MeSSI/8080 reads return one dummy word before the register
-     * value. Reading only the first cycle made the old diagnostic report
-     * COLMOD=0x04 even though that was not the pixel-format register value.
-     */
-    gpio_set_level(LCD_PIN_RD, 0);
-    esp_rom_delay_us(10);
-    *dummy = (uint16_t)(GPIO.in & LCD_DATA_MASK);
-    gpio_set_level(LCD_PIN_RD, 1);
-    esp_rom_delay_us(10);
+    for (size_t i = 0; i < count; ++i) {
+        /* FSMC also creates an independent CS pulse for every read access. */
+        gpio_set_level(LCD_PIN_CS, 0);
+        gpio_set_level(LCD_PIN_RD, 0);
+        esp_rom_delay_us(10);
+        values[i] = (uint16_t)(GPIO.in & LCD_DATA_MASK);
+        gpio_set_level(LCD_PIN_RD, 1);
+        gpio_set_level(LCD_PIN_CS, 1);
+        esp_rom_delay_us(10);
+    }
 
-    gpio_set_level(LCD_PIN_RD, 0);
-    esp_rom_delay_us(10);
-    *value = (uint16_t)(GPIO.in & LCD_DATA_MASK);
-    gpio_set_level(LCD_PIN_RD, 1);
-
-    gpio_set_level(LCD_PIN_CS, 1);
     ESP_ERROR_CHECK(configure_data_bus(GPIO_MODE_OUTPUT));
     set_data_bus(0);
+}
+
+static void read_reg_with_dummy(uint16_t reg, uint16_t *dummy,
+                                uint16_t *value)
+{
+    uint16_t words[2];
+    read_reg_words(reg, words, 2);
+    *dummy = words[0];
+    *value = words[1];
 }
 
 static void controller_init_nt35510(void)
@@ -177,24 +208,14 @@ static void controller_init_nt35510(void)
     write_reg(0xBA00, 0x01);
     write_regs(0xFF00, command2, sizeof(command2));
     write_reg(0x3500, 0x00);
-    write_reg(NT35510_MADCTL, 0x00);
-
-    /*
-     * Do not write COLMOD here. This particular breadboard bus does not pass
-     * the low data bits needed by 0x55 reliably, so retain the NT35510 reset
-     * default (24-bit control-interface format) and pack pixels accordingly.
-     */
+    /* Landscape: swap row/column and scan left-to-right across 800 pixels. */
+    write_reg(NT35510_MADCTL, 0x60);
+    /* Explicitly select the 18-bit stream that this physical panel retains. */
+    write_reg(NT35510_COLMOD, 0x66);
     write_command(0x1100);
     vTaskDelay(pdMS_TO_TICKS(120));
-    /* Re-assert the 480x800 gate-line mode after Sleep Out. */
-    write_reg(0xB500, 0x50);
-    write_reg(NT35510_MADCTL, 0x00);
-    write_command(0x1300); /* Normal display mode. */
-    write_command(0x3800); /* Idle mode off. */
-    vTaskDelay(pdMS_TO_TICKS(10));
-
     write_command(NT35510_DISPON);
-    vTaskDelay(pdMS_TO_TICKS(50));
+    write_command(NT35510_RAMWR);
 }
 
 typedef struct {
@@ -277,6 +298,8 @@ static void __attribute__((unused)) controller_init_otm8009a(void)
 static void set_window(uint16_t x_start, uint16_t y_start,
                        uint16_t x_end, uint16_t y_end)
 {
+    /* Match Waveshare's FSMC demo: every indexed byte is an independent
+     * command access followed by an independent data access. */
     write_reg(NT35510_CASET + 0, x_start >> 8);
     write_reg(NT35510_CASET + 1, x_start & 0xFF);
     write_reg(NT35510_CASET + 2, x_end >> 8);
@@ -287,55 +310,46 @@ static void set_window(uint16_t x_start, uint16_t y_start,
     write_reg(NT35510_PASET + 3, y_end & 0xFF);
 }
 
-static void begin_window(uint16_t x_start, uint16_t y_start,
-                         uint16_t x_end, uint16_t y_end)
+static void log_window_registers(const char *label)
 {
-    set_window(x_start, y_start, x_end, y_end);
-    gpio_set_level(LCD_PIN_CS, 0);
-    gpio_set_level(LCD_PIN_DC, 0);
-    pulse_write(NT35510_RAMWR);
+    uint16_t dummy[8];
+    uint16_t value[8];
+    const uint16_t regs[8] = {
+        NT35510_CASET + 0, NT35510_CASET + 1,
+        NT35510_CASET + 2, NT35510_CASET + 3,
+        NT35510_PASET + 0, NT35510_PASET + 1,
+        NT35510_PASET + 2, NT35510_PASET + 3,
+    };
+
+    for (size_t i = 0; i < 8; ++i) {
+        read_reg_with_dummy(regs[i], &dummy[i], &value[i]);
+    }
+    ESP_LOGI(TAG,
+             "%s window readback CASET=%04X/%04X %04X/%04X "
+             "%04X/%04X %04X/%04X PASET=%04X/%04X %04X/%04X "
+             "%04X/%04X %04X/%04X (dummy/value)",
+             label,
+             dummy[0], value[0], dummy[1], value[1],
+             dummy[2], value[2], dummy[3], value[3],
+             dummy[4], value[4], dummy[5], value[5],
+             dummy[6], value[6], dummy[7], value[7]);
+}
+
+static void begin_full_frame(void)
+{
+    /* MADCTL=0x60 changes the logical address space from 480x800 to 800x480. */
+    set_window(0, 0, LCD_V_RES - 1, LCD_H_RES - 1);
+    log_window_registers("full");
+    /* Register reads change the selected index, so restore the window. */
+    set_window(0, 0, LCD_V_RES - 1, LCD_H_RES - 1);
+    write_command(NT35510_RAMWR);
     gpio_set_level(LCD_PIN_DC, 1);
+    gpio_set_level(LCD_PIN_CS, 0);
 }
 
 static void end_frame(void)
 {
     gpio_set_level(LCD_PIN_CS, 1);
-}
-
-static inline uint8_t rgb565_red8(uint16_t color)
-{
-    const uint8_t red5 = (color >> 11) & 0x1FU;
-    return (red5 << 3) | (red5 >> 2);
-}
-
-static inline uint8_t rgb565_green8(uint16_t color)
-{
-    const uint8_t green6 = (color >> 5) & 0x3FU;
-    return (green6 << 2) | (green6 >> 4);
-}
-
-static inline uint8_t rgb565_blue8(uint16_t color)
-{
-    const uint8_t blue5 = color & 0x1FU;
-    return (blue5 << 3) | (blue5 >> 2);
-}
-
-static inline void write_two_rgb888_pixels(uint16_t first, uint16_t second)
-{
-    /*
-     * NT35510 16-bit parallel bus, packed RGB888 stream:
-     *   transfer 1 = R1:G1
-     *   transfer 2 = B1:R2
-     *   transfer 3 = G2:B2
-     * Duplicating bytes caused R,R,G / G,B,B grouping and the observed
-     * yellow/magenta/cyan solid-color screens, so do not duplicate lanes.
-     */
-    pulse_write(((uint16_t)rgb565_red8(first) << 8) |
-                rgb565_green8(first));
-    pulse_write(((uint16_t)rgb565_blue8(first) << 8) |
-                rgb565_red8(second));
-    pulse_write(((uint16_t)rgb565_green8(second) << 8) |
-                rgb565_blue8(second));
 }
 
 esp_err_t lcd_gpio_writer_init(void)
@@ -400,39 +414,22 @@ esp_err_t lcd_gpio_writer_init(void)
     uint16_t id1;
     uint16_t id2;
     uint16_t id3;
+    uint16_t ddb[8];
     read_reg_with_dummy(0xDA00, &dummy_da, &id1);
     read_reg_with_dummy(0xDB00, &dummy_db, &id2);
     read_reg_with_dummy(0xDC00, &dummy_dc, &id3);
+    read_reg_words(0xA100, ddb, sizeof(ddb) / sizeof(ddb[0]));
     ESP_LOGI(TAG,
              "LCD ID raw reads: DA=%04X/%04X DB=%04X/%04X DC=%04X/%04X "
              "(dummy/value)",
              dummy_da, id1, dummy_db, id2, dummy_dc, id3);
-    controller_init_nt35510();
-
-    uint16_t madctl_dummy;
-    uint16_t colmod_dummy;
-    uint16_t gate_mode_dummy;
-    uint16_t madctl;
-    uint16_t colmod;
-    uint16_t gate_mode;
-    read_reg_with_dummy(0x0B00, &madctl_dummy, &madctl);
-    read_reg_with_dummy(0x0C00, &colmod_dummy, &colmod);
-    read_reg_with_dummy(0xB500, &gate_mode_dummy, &gate_mode);
     ESP_LOGI(TAG,
-             "readback after init: MADCTL=%04X/%04X COLMOD=%04X/%04X "
-             "B500=%04X/%04X (dummy/value; expected B500=0050)",
-             madctl_dummy, madctl, colmod_dummy, colmod,
-             gate_mode_dummy, gate_mode);
-    if ((colmod & 0x00FFU) != 0x55U) {
-        use_rgb888_packing = true;
-        ESP_LOGW(TAG,
-                 "RGB565 did not latch (COLMOD=%02X); using NT35510 "
-                 "packed RGB888 (3 transfers / 2 pixels)",
-                 colmod & 0x00FFU);
-    } else {
-        use_rgb888_packing = false;
-        ESP_LOGI(TAG, "using native RGB565 packing (1 transfer / pixel)");
-    }
+             "LCD DDB A1 words: %04X %04X %04X %04X %04X %04X %04X %04X",
+             ddb[0], ddb[1], ddb[2], ddb[3], ddb[4], ddb[5], ddb[6],
+             ddb[7]);
+    controller_init_nt35510();
+    ESP_LOGI(TAG,
+             "480x800 RGB666 packed stream: 3 transfers / 2 pixels");
     initialized = true;
     return ESP_OK;
 }
@@ -443,24 +440,51 @@ void lcd_gpio_writer_fill(uint16_t color)
         return;
     }
 
-    /*
-     * Address every physical row explicitly. The panel's full-frame RAM
-     * auto-increment wraps early on this module revision and otherwise leaves
-     * the final part of the 800-line axis untouched.
-     */
-    for (uint16_t y = 0; y < LCD_V_RES; ++y) {
-        begin_window(0, y, LCD_H_RES - 1, y);
-        if (use_rgb888_packing) {
-            for (uint16_t x = 0; x < LCD_H_RES; x += 2) {
-                write_two_rgb888_pixels(color, color);
-            }
-        } else {
-            for (uint16_t x = 0; x < LCD_H_RES; ++x) {
-                pulse_write(color);
-            }
-        }
-        end_frame();
+    begin_full_frame();
+    const uint8_t red = rgb565_red8(color);
+    const uint8_t green = rgb565_green8(color);
+    const uint8_t blue = rgb565_blue8(color);
+    const uint16_t first = ((uint16_t)red << 8) | green;
+    const uint16_t second = ((uint16_t)blue << 8) | red;
+    const uint16_t third = ((uint16_t)green << 8) | blue;
+    const size_t pixel_pair_count = ((size_t)LCD_H_RES * LCD_V_RES) / 2;
+    for (size_t i = 0; i < pixel_pair_count; ++i) {
+        pulse_write(first);
+        pulse_write(second);
+        pulse_write(third);
     }
+    end_frame();
+}
+
+void lcd_gpio_writer_fill_rect(uint16_t x, uint16_t y, uint16_t width,
+                               uint16_t height, uint16_t color)
+{
+    if (!initialized || width == 0 || height == 0 ||
+        x + width > LCD_V_RES || y + height > LCD_H_RES) {
+        return;
+    }
+
+    set_window(x, y, x + width - 1, y + height - 1);
+    log_window_registers("rect");
+    set_window(x, y, x + width - 1, y + height - 1);
+    write_command(NT35510_RAMWR);
+    gpio_set_level(LCD_PIN_DC, 1);
+    gpio_set_level(LCD_PIN_CS, 0);
+
+    const uint8_t red = rgb565_red8(color);
+    const uint8_t green = rgb565_green8(color);
+    const uint8_t blue = rgb565_blue8(color);
+    const uint16_t first = ((uint16_t)red << 8) | green;
+    const uint16_t second = ((uint16_t)blue << 8) | red;
+    const uint16_t third = ((uint16_t)green << 8) | blue;
+    const size_t pixel_count = (size_t)width * height;
+
+    for (size_t i = 0; i < pixel_count / 2; ++i) {
+        pulse_write(first);
+        pulse_write(second);
+        pulse_write(third);
+    }
+    end_frame();
 }
 
 esp_err_t lcd_gpio_writer_draw(const uint16_t *pixels, size_t pixel_count)
@@ -471,20 +495,18 @@ esp_err_t lcd_gpio_writer_draw(const uint16_t *pixels, size_t pixel_count)
                         ESP_ERR_INVALID_SIZE, TAG,
                         "expected one complete 480x800 frame");
 
-    for (uint16_t y = 0; y < LCD_V_RES; ++y) {
-        const size_t row_start = (size_t)y * LCD_H_RES;
-        begin_window(0, y, LCD_H_RES - 1, y);
-        if (use_rgb888_packing) {
-            for (uint16_t x = 0; x < LCD_H_RES; x += 2) {
-                write_two_rgb888_pixels(pixels[row_start + x],
-                                        pixels[row_start + x + 1]);
-            }
-        } else {
-            for (uint16_t x = 0; x < LCD_H_RES; ++x) {
-                pulse_write(pixels[row_start + x]);
-            }
-        }
-        end_frame();
+    begin_full_frame();
+    for (size_t i = 0; i < pixel_count; i += 2) {
+        const uint8_t r1 = rgb565_red8(pixels[i]);
+        const uint8_t g1 = rgb565_green8(pixels[i]);
+        const uint8_t b1 = rgb565_blue8(pixels[i]);
+        const uint8_t r2 = rgb565_red8(pixels[i + 1]);
+        const uint8_t g2 = rgb565_green8(pixels[i + 1]);
+        const uint8_t b2 = rgb565_blue8(pixels[i + 1]);
+        pulse_write(((uint16_t)r1 << 8) | g1);
+        pulse_write(((uint16_t)b1 << 8) | r2);
+        pulse_write(((uint16_t)g2 << 8) | b2);
     }
+    end_frame();
     return ESP_OK;
 }
