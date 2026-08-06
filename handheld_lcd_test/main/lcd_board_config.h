@@ -34,8 +34,8 @@
 /* Start slowly when using long Dupont wires. Raise only after stable output. */
 #define LCD_PIXEL_CLOCK_HZ  (2 * 1000 * 1000)
 
-#define LCD_H_RES          480
-#define LCD_V_RES          800
+#define LCD_H_RES          800
+#define LCD_V_RES          480
 #define LCD_TILE_LINES      20
 #define LCD_BUS_WIDTH       16
 

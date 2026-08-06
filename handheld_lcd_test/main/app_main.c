@@ -32,11 +32,25 @@ void app_main(void)
 
     gpio_set_level(LCD_PIN_BL, LCD_BL_ON_LEVEL);
 
-    ESP_LOGI(TAG, "writing one full-screen solid green frame");
+    // ESP_LOGI(TAG, "writing one full-screen solid green frame");
+    // lcd_gpio_writer_fill(rgb565(0, 255, 0));
+    // ESP_LOGI(TAG, "writing red to logical x=720..799 (right edge)");
+    // lcd_gpio_writer_fill_rect(720, 0, 80, 480, rgb565(255, 0, 0));
+    // ESP_LOGI(TAG, "right-edge address test complete; holding frame");
+
+    ESP_LOGI(TAG, "fill full screen green");
     lcd_gpio_writer_fill(rgb565(0, 255, 0));
-    ESP_LOGI(TAG, "writing red to logical x=720..799 (right edge)");
-    lcd_gpio_writer_fill_rect(720, 0, 80, 480, rgb565(255, 0, 0));
-    ESP_LOGI(TAG, "right-edge address test complete; holding frame");
+
+    ESP_LOGI(TAG, "draw red edge");
+    lcd_gpio_writer_fill_rect(
+        0,
+        720,
+        480,
+        80,
+        rgb565(255, 0, 0)
+    );
+
+    ESP_LOGI(TAG, "test complete");
 
     while (true) {
         vTaskDelay(pdMS_TO_TICKS(1000));

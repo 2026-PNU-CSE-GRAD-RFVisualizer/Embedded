@@ -207,15 +207,34 @@ static void controller_init_nt35510(void)
     write_regs(0xBD00, timing, sizeof(timing));
     write_reg(0xBA00, 0x01);
     write_regs(0xFF00, command2, sizeof(command2));
+    // write_reg(0x3500, 0x00);
+    // /* Landscape: swap row/column and scan left-to-right across 800 pixels. */
+    // write_reg(NT35510_MADCTL, 0x60);
+    // /* Explicitly select the 18-bit stream that this physical panel retains. */
+    // write_reg(NT35510_COLMOD, 0x66);
+    // write_command(0x1100);
+    // vTaskDelay(pdMS_TO_TICKS(120));
+    // write_command(NT35510_DISPON);
+    // write_command(NT35510_RAMWR);
+
     write_reg(0x3500, 0x00);
-    /* Landscape: swap row/column and scan left-to-right across 800 pixels. */
-    write_reg(NT35510_MADCTL, 0x60);
-    /* Explicitly select the 18-bit stream that this physical panel retains. */
-    write_reg(NT35510_COLMOD, 0x66);
-    write_command(0x1100);
+
+    write_command(0x1100);  // Sleep Out
     vTaskDelay(pdMS_TO_TICKS(120));
+
+    /*
+    * Sleep Out 이후 다시 설정해야 실제 패널에 유지됨.
+    */
+    write_reg(0xB500, 0x50);              // 480x800 gate 설정
+    write_reg(NT35510_MADCTL, 0x60);      // 가로 800x480
+    write_reg(NT35510_COLMOD, 0x66);      // 기존에 RGB가 정상인 RGB666 방식
+
+    write_command(0x1300);                // Normal Display Mode
+    write_command(0x3800);                // Idle Mode Off
+    vTaskDelay(pdMS_TO_TICKS(10));
+
     write_command(NT35510_DISPON);
-    write_command(NT35510_RAMWR);
+    vTaskDelay(pdMS_TO_TICKS(50));
 }
 
 typedef struct {
@@ -335,14 +354,30 @@ static void log_window_registers(const char *label)
              dummy[6], value[6], dummy[7], value[7]);
 }
 
+// static void begin_full_frame(void)
+// {
+//     /* MADCTL=0x60 changes the logical address space from 480x800 to 800x480. */
+//     set_window(0, 0, LCD_V_RES - 1, LCD_H_RES - 1);
+//     log_window_registers("full");
+//     /* Register reads change the selected index, so restore the window. */
+//     set_window(0, 0, LCD_V_RES - 1, LCD_H_RES - 1);
+//     write_command(NT35510_RAMWR);
+//     gpio_set_level(LCD_PIN_DC, 1);
+//     gpio_set_level(LCD_PIN_CS, 0);
+// }
+
 static void begin_full_frame(void)
 {
-    /* MADCTL=0x60 changes the logical address space from 480x800 to 800x480. */
-    set_window(0, 0, LCD_V_RES - 1, LCD_H_RES - 1);
-    log_window_registers("full");
-    /* Register reads change the selected index, so restore the window. */
-    set_window(0, 0, LCD_V_RES - 1, LCD_H_RES - 1);
+    // 가로 화면: X=0~799, Y=0~479
+    set_window(
+        0,
+        0,
+        LCD_V_RES - 1,  // 799
+        LCD_H_RES - 1   // 479
+    );
+
     write_command(NT35510_RAMWR);
+
     gpio_set_level(LCD_PIN_DC, 1);
     gpio_set_level(LCD_PIN_CS, 0);
 }
@@ -434,6 +469,28 @@ esp_err_t lcd_gpio_writer_init(void)
     return ESP_OK;
 }
 
+// void lcd_gpio_writer_fill(uint16_t color)
+// {
+//     if (!initialized) {
+//         return;
+//     }
+
+//     begin_full_frame();
+//     const uint8_t red = rgb565_red8(color);
+//     const uint8_t green = rgb565_green8(color);
+//     const uint8_t blue = rgb565_blue8(color);
+//     const uint16_t first = ((uint16_t)red << 8) | green;
+//     const uint16_t second = ((uint16_t)blue << 8) | red;
+//     const uint16_t third = ((uint16_t)green << 8) | blue;
+//     const size_t pixel_pair_count = ((size_t)LCD_H_RES * LCD_V_RES) / 2;
+//     for (size_t i = 0; i < pixel_pair_count; ++i) {
+//         pulse_write(first);
+//         pulse_write(second);
+//         pulse_write(third);
+//     }
+//     end_frame();
+// }
+
 void lcd_gpio_writer_fill(uint16_t color)
 {
     if (!initialized) {
@@ -441,49 +498,119 @@ void lcd_gpio_writer_fill(uint16_t color)
     }
 
     begin_full_frame();
+
     const uint8_t red = rgb565_red8(color);
     const uint8_t green = rgb565_green8(color);
     const uint8_t blue = rgb565_blue8(color);
-    const uint16_t first = ((uint16_t)red << 8) | green;
-    const uint16_t second = ((uint16_t)blue << 8) | red;
-    const uint16_t third = ((uint16_t)green << 8) | blue;
-    const size_t pixel_pair_count = ((size_t)LCD_H_RES * LCD_V_RES) / 2;
-    for (size_t i = 0; i < pixel_pair_count; ++i) {
+
+    const uint16_t first =
+        ((uint16_t)red << 8) | green;
+
+    const uint16_t second =
+        ((uint16_t)blue << 8) | red;
+
+    const uint16_t third =
+        ((uint16_t)green << 8) | blue;
+
+    const size_t pixel_count =
+        (size_t)LCD_H_RES * (size_t)LCD_V_RES;
+
+    for (size_t i = 0; i < pixel_count; ++i) {
         pulse_write(first);
         pulse_write(second);
         pulse_write(third);
+
+        // 전체 전송 시간이 길어서 Watchdog 리셋 방지
+        if ((i & 0x0FFF) == 0x0FFF) {
+            vTaskDelay(pdMS_TO_TICKS(1));
+        }
     }
+
     end_frame();
 }
 
-void lcd_gpio_writer_fill_rect(uint16_t x, uint16_t y, uint16_t width,
-                               uint16_t height, uint16_t color)
+// void lcd_gpio_writer_fill_rect(uint16_t x, uint16_t y, uint16_t width,
+//                                uint16_t height, uint16_t color)
+// {
+//     if (!initialized || width == 0 || height == 0 ||
+//         x + width > LCD_V_RES || y + height > LCD_H_RES) {
+//         return;
+//     }
+
+//     set_window(x, y, x + width - 1, y + height - 1);
+//     log_window_registers("rect");
+//     set_window(x, y, x + width - 1, y + height - 1);
+//     write_command(NT35510_RAMWR);
+//     gpio_set_level(LCD_PIN_DC, 1);
+//     gpio_set_level(LCD_PIN_CS, 0);
+
+//     const uint8_t red = rgb565_red8(color);
+//     const uint8_t green = rgb565_green8(color);
+//     const uint8_t blue = rgb565_blue8(color);
+//     const uint16_t first = ((uint16_t)red << 8) | green;
+//     const uint16_t second = ((uint16_t)blue << 8) | red;
+//     const uint16_t third = ((uint16_t)green << 8) | blue;
+//     const size_t pixel_count = (size_t)width * height;
+
+//     for (size_t i = 0; i < pixel_count / 2; ++i) {
+//         pulse_write(first);
+//         pulse_write(second);
+//         pulse_write(third);
+//     }
+//     end_frame();
+// }
+
+
+void lcd_gpio_writer_fill_rect(uint16_t x, uint16_t y,
+                               uint16_t width, uint16_t height,
+                               uint16_t color)
 {
-    if (!initialized || width == 0 || height == 0 ||
-        x + width > LCD_V_RES || y + height > LCD_H_RES) {
+    if (!initialized ||
+        width == 0 ||
+        height == 0 ||
+        (uint32_t)x + width > LCD_V_RES ||
+        (uint32_t)y + height > LCD_H_RES) {
         return;
     }
 
-    set_window(x, y, x + width - 1, y + height - 1);
-    log_window_registers("rect");
-    set_window(x, y, x + width - 1, y + height - 1);
+    set_window(
+        x,
+        y,
+        x + width - 1,
+        y + height - 1
+    );
+
     write_command(NT35510_RAMWR);
+
     gpio_set_level(LCD_PIN_DC, 1);
     gpio_set_level(LCD_PIN_CS, 0);
 
     const uint8_t red = rgb565_red8(color);
     const uint8_t green = rgb565_green8(color);
     const uint8_t blue = rgb565_blue8(color);
-    const uint16_t first = ((uint16_t)red << 8) | green;
-    const uint16_t second = ((uint16_t)blue << 8) | red;
-    const uint16_t third = ((uint16_t)green << 8) | blue;
-    const size_t pixel_count = (size_t)width * height;
 
-    for (size_t i = 0; i < pixel_count / 2; ++i) {
+    const uint16_t first =
+        ((uint16_t)red << 8) | green;
+
+    const uint16_t second =
+        ((uint16_t)blue << 8) | red;
+
+    const uint16_t third =
+        ((uint16_t)green << 8) | blue;
+
+    const size_t pixel_count =
+        (size_t)width * height;
+
+    for (size_t i = 0; i < pixel_count; ++i) {
         pulse_write(first);
         pulse_write(second);
         pulse_write(third);
+
+        if ((i & 0x0FFF) == 0x0FFF) {
+            vTaskDelay(pdMS_TO_TICKS(1));
+        }
     }
+
     end_frame();
 }
 
