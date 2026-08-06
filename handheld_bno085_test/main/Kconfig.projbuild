@@ -1,0 +1,29 @@
+menu "BNO085 test configuration"
+
+    config BNO085_I2C_ADDRESS
+        hex "BNO085 7-bit I2C address"
+        range 0x4A 0x4B
+        default 0x4B
+
+    config BNO085_I2C_SPEED_HZ
+        int "I2C clock speed (Hz)"
+        range 100000 400000
+        default 100000
+
+    config BNO085_REPORT_INTERVAL_US
+        int "Sensor report interval (microseconds)"
+        range 5000 1000000
+        default 20000
+
+    choice BNO085_REPORT_TYPE
+        prompt "Quaternion report"
+        default BNO085_REPORT_GAME_ROTATION_VECTOR
+
+        config BNO085_REPORT_GAME_ROTATION_VECTOR
+            bool "Game Rotation Vector (gyro + accelerometer)"
+
+        config BNO085_REPORT_ROTATION_VECTOR
+            bool "Rotation Vector (gyro + accelerometer + magnetometer)"
+    endchoice
+
+endmenu
