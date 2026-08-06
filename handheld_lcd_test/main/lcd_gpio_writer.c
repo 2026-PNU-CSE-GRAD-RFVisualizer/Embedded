@@ -354,26 +354,18 @@ static void log_window_registers(const char *label)
              dummy[6], value[6], dummy[7], value[7]);
 }
 
-// static void begin_full_frame(void)
-// {
-//     /* MADCTL=0x60 changes the logical address space from 480x800 to 800x480. */
-//     set_window(0, 0, LCD_V_RES - 1, LCD_H_RES - 1);
-//     log_window_registers("full");
-//     /* Register reads change the selected index, so restore the window. */
-//     set_window(0, 0, LCD_V_RES - 1, LCD_H_RES - 1);
-//     write_command(NT35510_RAMWR);
-//     gpio_set_level(LCD_PIN_DC, 1);
-//     gpio_set_level(LCD_PIN_CS, 0);
-// }
 
 static void begin_full_frame(void)
 {
-    // 가로 화면: X=0~799, Y=0~479
+    /*
+     * 화면은 가로로 보이지만 LCD 주소 범위는
+     * X = 0~479, Y = 0~799로 설정해야 전체가 채워짐.
+     */
     set_window(
         0,
         0,
-        LCD_V_RES - 1,  // 799
-        LCD_H_RES - 1   // 479
+        LCD_V_RES - 1,  // 479
+        LCD_H_RES - 1   // 799
     );
 
     write_command(NT35510_RAMWR);
@@ -469,27 +461,6 @@ esp_err_t lcd_gpio_writer_init(void)
     return ESP_OK;
 }
 
-// void lcd_gpio_writer_fill(uint16_t color)
-// {
-//     if (!initialized) {
-//         return;
-//     }
-
-//     begin_full_frame();
-//     const uint8_t red = rgb565_red8(color);
-//     const uint8_t green = rgb565_green8(color);
-//     const uint8_t blue = rgb565_blue8(color);
-//     const uint16_t first = ((uint16_t)red << 8) | green;
-//     const uint16_t second = ((uint16_t)blue << 8) | red;
-//     const uint16_t third = ((uint16_t)green << 8) | blue;
-//     const size_t pixel_pair_count = ((size_t)LCD_H_RES * LCD_V_RES) / 2;
-//     for (size_t i = 0; i < pixel_pair_count; ++i) {
-//         pulse_write(first);
-//         pulse_write(second);
-//         pulse_write(third);
-//     }
-//     end_frame();
-// }
 
 void lcd_gpio_writer_fill(uint16_t color)
 {
@@ -512,53 +483,18 @@ void lcd_gpio_writer_fill(uint16_t color)
     const uint16_t third =
         ((uint16_t)green << 8) | blue;
 
-    const size_t pixel_count =
-        (size_t)LCD_H_RES * (size_t)LCD_V_RES;
+    const size_t pixel_pair_count =
+        ((size_t)LCD_H_RES * (size_t)LCD_V_RES) / 2;
 
-    for (size_t i = 0; i < pixel_count; ++i) {
+    for (size_t i = 0; i < pixel_pair_count; ++i) {
         pulse_write(first);
         pulse_write(second);
         pulse_write(third);
-
-        // 전체 전송 시간이 길어서 Watchdog 리셋 방지
-        if ((i & 0x0FFF) == 0x0FFF) {
-            vTaskDelay(pdMS_TO_TICKS(1));
-        }
     }
 
     end_frame();
 }
 
-// void lcd_gpio_writer_fill_rect(uint16_t x, uint16_t y, uint16_t width,
-//                                uint16_t height, uint16_t color)
-// {
-//     if (!initialized || width == 0 || height == 0 ||
-//         x + width > LCD_V_RES || y + height > LCD_H_RES) {
-//         return;
-//     }
-
-//     set_window(x, y, x + width - 1, y + height - 1);
-//     log_window_registers("rect");
-//     set_window(x, y, x + width - 1, y + height - 1);
-//     write_command(NT35510_RAMWR);
-//     gpio_set_level(LCD_PIN_DC, 1);
-//     gpio_set_level(LCD_PIN_CS, 0);
-
-//     const uint8_t red = rgb565_red8(color);
-//     const uint8_t green = rgb565_green8(color);
-//     const uint8_t blue = rgb565_blue8(color);
-//     const uint16_t first = ((uint16_t)red << 8) | green;
-//     const uint16_t second = ((uint16_t)blue << 8) | red;
-//     const uint16_t third = ((uint16_t)green << 8) | blue;
-//     const size_t pixel_count = (size_t)width * height;
-
-//     for (size_t i = 0; i < pixel_count / 2; ++i) {
-//         pulse_write(first);
-//         pulse_write(second);
-//         pulse_write(third);
-//     }
-//     end_frame();
-// }
 
 
 void lcd_gpio_writer_fill_rect(uint16_t x, uint16_t y,
@@ -568,8 +504,8 @@ void lcd_gpio_writer_fill_rect(uint16_t x, uint16_t y,
     if (!initialized ||
         width == 0 ||
         height == 0 ||
-        (uint32_t)x + width > LCD_V_RES ||
-        (uint32_t)y + height > LCD_H_RES) {
+        (uint32_t)x + width > LCD_H_RES ||
+        (uint32_t)y + height > LCD_V_RES) {
         return;
     }
 
@@ -599,16 +535,12 @@ void lcd_gpio_writer_fill_rect(uint16_t x, uint16_t y,
         ((uint16_t)green << 8) | blue;
 
     const size_t pixel_count =
-        (size_t)width * height;
+        (size_t)width * (size_t)height;
 
-    for (size_t i = 0; i < pixel_count; ++i) {
+    for (size_t i = 0; i < pixel_count / 2; ++i) {
         pulse_write(first);
         pulse_write(second);
         pulse_write(third);
-
-        if ((i & 0x0FFF) == 0x0FFF) {
-            vTaskDelay(pdMS_TO_TICKS(1));
-        }
     }
 
     end_frame();

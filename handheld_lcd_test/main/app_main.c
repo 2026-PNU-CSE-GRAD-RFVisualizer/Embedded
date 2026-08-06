@@ -41,14 +41,6 @@ void app_main(void)
     ESP_LOGI(TAG, "fill full screen green");
     lcd_gpio_writer_fill(rgb565(0, 255, 0));
 
-    ESP_LOGI(TAG, "draw red edge");
-    lcd_gpio_writer_fill_rect(
-        0,
-        720,
-        480,
-        80,
-        rgb565(255, 0, 0)
-    );
 
     ESP_LOGI(TAG, "test complete");
 
