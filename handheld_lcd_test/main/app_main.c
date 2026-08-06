@@ -10,6 +10,13 @@
 
 static const char *TAG = "lcd_test";
 
+extern const uint8_t testimage_start[]
+    asm("_binary_testimage_rgb565_start");
+
+extern const uint8_t testimage_end[]
+    asm("_binary_testimage_rgb565_end");
+
+
 static inline uint16_t rgb565(uint8_t red, uint8_t green, uint8_t blue)
 {
     return ((uint16_t)(red & 0xF8) << 8) |
@@ -32,14 +39,36 @@ void app_main(void)
 
     gpio_set_level(LCD_PIN_BL, LCD_BL_ON_LEVEL);
 
-    // ESP_LOGI(TAG, "writing one full-screen solid green frame");
-    // lcd_gpio_writer_fill(rgb565(0, 255, 0));
-    // ESP_LOGI(TAG, "writing red to logical x=720..799 (right edge)");
-    // lcd_gpio_writer_fill_rect(720, 0, 80, 480, rgb565(255, 0, 0));
-    // ESP_LOGI(TAG, "right-edge address test complete; holding frame");
 
-    ESP_LOGI(TAG, "fill full screen green");
-    lcd_gpio_writer_fill(rgb565(0, 255, 0));
+    ESP_LOGI(TAG, "fill full screen test image");
+    const size_t frame_pixels =
+        (size_t)LCD_H_RES * (size_t)LCD_V_RES;
+
+    const size_t expected_bytes =
+        frame_pixels * sizeof(uint16_t);
+
+    const size_t image_bytes =
+        (size_t)(testimage_end - testimage_start);
+
+    ESP_LOGI(TAG,
+            "image bytes=%u, expected=%u",
+            (unsigned)image_bytes,
+            (unsigned)expected_bytes);
+
+    ESP_ERROR_CHECK(
+        image_bytes == expected_bytes
+            ? ESP_OK
+            : ESP_ERR_INVALID_SIZE
+    );
+
+    ESP_ERROR_CHECK(
+        lcd_gpio_writer_draw(
+            (const uint16_t *)testimage_start,
+            frame_pixels
+        )
+    );
+
+    ESP_LOGI(TAG, "image draw complete");
 
 
     ESP_LOGI(TAG, "test complete");

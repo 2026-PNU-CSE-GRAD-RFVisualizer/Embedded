@@ -559,9 +559,11 @@ esp_err_t lcd_gpio_writer_draw(const uint16_t *pixels, size_t pixel_count)
         const uint8_t r1 = rgb565_red8(pixels[i]);
         const uint8_t g1 = rgb565_green8(pixels[i]);
         const uint8_t b1 = rgb565_blue8(pixels[i]);
+
         const uint8_t r2 = rgb565_red8(pixels[i + 1]);
         const uint8_t g2 = rgb565_green8(pixels[i + 1]);
         const uint8_t b2 = rgb565_blue8(pixels[i + 1]);
+
         pulse_write(((uint16_t)r1 << 8) | g1);
         pulse_write(((uint16_t)b1 << 8) | r2);
         pulse_write(((uint16_t)g2 << 8) | b2);
