@@ -1,5 +1,21 @@
 menu "RFVisualizer handheld JPEG stream"
 
+config HANDHELD_LOCAL_10FPS_TEST
+    bool "Run embedded 10-frame / 10 FPS LCD animation test"
+    default y
+    help
+        Show ten embedded 800x480 baseline JPEG frames at 100 ms intervals
+        forever. Wi-Fi and server streaming are skipped while this is enabled.
+        Disable it to use the network JPEG stream client.
+
+config HANDHELD_LCD_PIXEL_CLOCK_MHZ
+    int "LCD I80 pixel clock (MHz)"
+    range 8 20
+    default 16
+    help
+        16 MHz is intended for the cached 10 FPS test. Reduce this if long
+        breadboard wiring causes pixel noise; reducing it also lowers FPS.
+
 config HANDHELD_WIFI_SSID
     string "Wi-Fi SSID"
     default ""

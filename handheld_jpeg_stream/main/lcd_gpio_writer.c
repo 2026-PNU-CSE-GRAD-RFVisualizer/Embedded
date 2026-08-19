@@ -36,6 +36,14 @@ static esp_lcd_panel_io_handle_t panel_io;
 static SemaphoreHandle_t dma_done;
 static uint16_t *dma_frame;
 
+typedef struct {
+    uint16_t red_green;
+    uint16_t blue_red_mask;
+    uint16_t green_blue;
+} rgb332_lookup_t;
+
+static rgb332_lookup_t rgb332_lookup[256];
+
 #define LCD_FRAME_PIXELS ((size_t)LCD_H_RES * LCD_V_RES)
 #define LCD_FRAME_WORDS  (LCD_FRAME_PIXELS * 3 / 2)
 #define LCD_FRAME_BYTES  (LCD_FRAME_WORDS * sizeof(uint16_t))
@@ -61,6 +69,28 @@ static inline uint8_t rgb565_blue8(uint16_t color)
 {
     const uint8_t b5 = color & 0x1F;
     return (uint8_t)(((b5 << 3) | (b5 >> 2)) & 0xFC);
+}
+
+static void prepare_rgb332_lookup(void)
+{
+    for (unsigned value = 0; value < 256; ++value) {
+        const uint8_t red3 = (value >> 5) & 0x07;
+        const uint8_t green3 = (value >> 2) & 0x07;
+        const uint8_t blue2 = value & 0x03;
+        const uint8_t red6 = (red3 << 3) | red3;
+        const uint8_t green6 = (green3 << 3) | green3;
+        const uint8_t blue6 = (blue2 << 4) | (blue2 << 2) | blue2;
+        const uint8_t red8 = red6 << 2;
+        const uint8_t green8 = green6 << 2;
+        const uint8_t blue8 = blue6 << 2;
+
+        rgb332_lookup[value].red_green =
+            ((uint16_t)red8 << 8) | green8;
+        rgb332_lookup[value].blue_red_mask =
+            ((uint16_t)blue8 << 8) | red8;
+        rgb332_lookup[value].green_blue =
+            ((uint16_t)green8 << 8) | blue8;
+    }
 }
 
 static esp_err_t configure_data_bus(gpio_mode_t mode)
@@ -329,8 +359,8 @@ static void __attribute__((unused)) begin_full_frame(void)
     set_window(
         0,
         0,
-        LCD_V_RES - 1,  // Native column end: 479
-        LCD_H_RES - 1   // Native page end: 799
+        LCD_H_RES - 1,
+        LCD_V_RES - 1
     );
 
     write_command(NT35510_RAMWR);
@@ -526,8 +556,11 @@ esp_err_t lcd_gpio_writer_init(void)
 
     ESP_LOGI(TAG, "write-only LCD bus: D0=GPIO38, RD tied high");
     controller_init_nt35510();
-    set_window(0, 0, LCD_V_RES - 1, LCD_H_RES - 1);
-    ESP_LOGI(TAG, "GPIO-programmed full window: X=0..479, Y=0..799");
+    prepare_rgb332_lookup();
+    /* MADCTL=0x60 presents the GRAM in landscape coordinates on this module.
+     * Using the native portrait limits here updated only the left 480 pixels. */
+    set_window(0, 0, LCD_H_RES - 1, LCD_V_RES - 1);
+    ESP_LOGI(TAG, "GPIO-programmed full window: X=0..799, Y=0..479");
     ESP_RETURN_ON_ERROR(start_i80_dma(), TAG,
                         "failed to switch LCD frame path to DMA");
     ESP_LOGI(TAG,
@@ -625,4 +658,33 @@ esp_err_t lcd_gpio_writer_draw(const uint16_t *pixels, size_t pixel_count)
     ESP_RETURN_ON_ERROR(dma_begin_full_frame(), TAG,
                         "failed to begin DMA frame");
     return dma_send_pixels(pixels, 0, false, pixel_count);
+}
+
+esp_err_t lcd_gpio_writer_draw_rgb332(const uint8_t *pixels,
+                                      size_t pixel_count)
+{
+    ESP_RETURN_ON_FALSE(initialized && pixels, ESP_ERR_INVALID_STATE, TAG,
+                        "writer is not initialized");
+    ESP_RETURN_ON_FALSE(pixel_count == LCD_FRAME_PIXELS,
+                        ESP_ERR_INVALID_SIZE, TAG,
+                        "expected one complete 800x480 RGB332 frame");
+
+    for (size_t i = 0; i < pixel_count; i += 2) {
+        const rgb332_lookup_t *first = &rgb332_lookup[pixels[i]];
+        const rgb332_lookup_t *second = &rgb332_lookup[pixels[i + 1]];
+        uint16_t *output = &dma_frame[(i / 2) * 3];
+        output[0] = first->red_green;
+        output[1] = (first->blue_red_mask & 0xFF00) |
+                    (second->blue_red_mask & 0x00FF);
+        output[2] = second->green_blue;
+    }
+
+    ESP_RETURN_ON_ERROR(
+        esp_lcd_panel_io_tx_color(panel_io, NT35510_RAMWR,
+                                  dma_frame, LCD_FRAME_BYTES),
+        TAG, "RGB332 full-frame DMA submission failed");
+    ESP_RETURN_ON_FALSE(xSemaphoreTake(dma_done, portMAX_DELAY) == pdTRUE,
+                        ESP_FAIL, TAG,
+                        "RGB332 full-frame DMA completion failed");
+    return ESP_OK;
 }

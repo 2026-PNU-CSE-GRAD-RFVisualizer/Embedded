@@ -13,6 +13,9 @@
 #include "lcd_gpio_writer.h"
 #include "jpeg_lcd_sink.h"
 #include "jpeg_stream_client.h"
+#if CONFIG_HANDHELD_LOCAL_10FPS_TEST
+#include "local_animation_test.h"
+#endif
 
 #define WIFI_CONNECTED_BIT BIT0
 
@@ -44,7 +47,7 @@ static void show_boot_color_test(void)
     }
 
     lcd_gpio_writer_fill(rgb565(0, 0, 0));
-    ESP_LOGI(TAG, "boot LCD color test complete; waiting for server JPEG");
+    ESP_LOGI(TAG, "boot LCD color test complete");
 }
 
 static void wifi_event_handler(void *argument, esp_event_base_t event_base,
@@ -111,6 +114,11 @@ void app_main(void)
 
     ESP_ERROR_CHECK(jpeg_lcd_sink_init());
     show_boot_color_test();
+
+#if CONFIG_HANDHELD_LOCAL_10FPS_TEST
+    ESP_LOGI(TAG, "local 10 FPS animation test enabled; Wi-Fi is skipped");
+    local_animation_test_run();
+#endif
 
     if (CONFIG_HANDHELD_WIFI_SSID[0] == '\0' ||
         CONFIG_JPEG_STREAM_SERVER_HOST[0] == '\0') {

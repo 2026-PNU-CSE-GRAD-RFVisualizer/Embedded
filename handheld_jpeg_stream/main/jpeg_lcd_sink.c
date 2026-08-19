@@ -58,10 +58,13 @@ esp_err_t jpeg_lcd_sink_init(void)
     return ESP_OK;
 }
 
-esp_err_t jpeg_lcd_sink_render(const jpeg_stream_frame_t *frame)
+static esp_err_t decode_rgb565(const jpeg_stream_frame_t *frame,
+                               int64_t *decode_elapsed_us)
 {
     ESP_RETURN_ON_FALSE(s_initialized, ESP_ERR_INVALID_STATE, TAG,
                         "LCD sink is not initialized");
+    ESP_RETURN_ON_FALSE(s_rgb565_frame != NULL, ESP_ERR_INVALID_STATE, TAG,
+                        "JPEG decode buffer was released");
     ESP_RETURN_ON_FALSE(frame != NULL && frame->jpeg != NULL &&
                         frame->jpeg_length > 0,
                         ESP_ERR_INVALID_ARG, TAG, "empty JPEG frame");
@@ -109,7 +112,7 @@ esp_err_t jpeg_lcd_sink_render(const jpeg_stream_frame_t *frame)
     esp_jpeg_image_output_t decoded = {0};
     const int64_t decode_start_us = esp_timer_get_time();
     result = esp_jpeg_decode(&decode_config, &decoded);
-    const int64_t decode_elapsed_us = esp_timer_get_time() - decode_start_us;
+    *decode_elapsed_us = esp_timer_get_time() - decode_start_us;
     ESP_RETURN_ON_ERROR(result, TAG,
                         "seq=%lu JPEG decode failed (progressive JPEG unsupported)",
                         (unsigned long)frame->seq);
@@ -123,8 +126,18 @@ esp_err_t jpeg_lcd_sink_render(const jpeg_stream_frame_t *frame)
                         decoded.width, decoded.height,
                         (unsigned)decoded.output_len);
 
+    return ESP_OK;
+}
+
+esp_err_t jpeg_lcd_sink_render(const jpeg_stream_frame_t *frame)
+{
+    int64_t decode_elapsed_us = 0;
+    ESP_RETURN_ON_ERROR(decode_rgb565(frame, &decode_elapsed_us), TAG,
+                        "JPEG decode failed");
+
     const int64_t draw_start_us = esp_timer_get_time();
-    result = lcd_gpio_writer_draw(s_rgb565_frame, RGB565_PIXEL_COUNT);
+    const esp_err_t result =
+        lcd_gpio_writer_draw(s_rgb565_frame, RGB565_PIXEL_COUNT);
     const int64_t draw_elapsed_us = esp_timer_get_time() - draw_start_us;
     ESP_RETURN_ON_ERROR(result, TAG, "seq=%lu LCD draw failed",
                         (unsigned long)frame->seq);
@@ -135,4 +148,37 @@ esp_err_t jpeg_lcd_sink_render(const jpeg_stream_frame_t *frame)
              (long long)(decode_elapsed_us / 1000),
              (long long)(draw_elapsed_us / 1000));
     return ESP_OK;
+}
+
+esp_err_t jpeg_lcd_sink_decode_rgb332(const jpeg_stream_frame_t *frame,
+                                      uint8_t *output, size_t output_size)
+{
+    ESP_RETURN_ON_FALSE(output != NULL && output_size >= RGB565_PIXEL_COUNT,
+                        ESP_ERR_INVALID_ARG, TAG,
+                        "RGB332 output buffer is too small");
+
+    int64_t decode_elapsed_us = 0;
+    ESP_RETURN_ON_ERROR(decode_rgb565(frame, &decode_elapsed_us), TAG,
+                        "JPEG cache decode failed");
+
+    for (size_t i = 0; i < RGB565_PIXEL_COUNT; ++i) {
+        const uint16_t color = s_rgb565_frame[i];
+        output[i] = (uint8_t)(((color >> 8) & 0xE0) |
+                              ((color >> 6) & 0x1C) |
+                              ((color >> 3) & 0x03));
+    }
+
+    ESP_LOGI(TAG, "cached seq=%lu as RGB332, decode=%lld ms",
+             (unsigned long)frame->seq,
+             (long long)(decode_elapsed_us / 1000));
+    return ESP_OK;
+}
+
+void jpeg_lcd_sink_release_decode_buffer(void)
+{
+    if (s_rgb565_frame != NULL) {
+        heap_caps_free(s_rgb565_frame);
+        s_rgb565_frame = NULL;
+        ESP_LOGI(TAG, "released RGB565 JPEG decode buffer after caching");
+    }
 }

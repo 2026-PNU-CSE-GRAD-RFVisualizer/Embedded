@@ -16,8 +16,9 @@ void lcd_gpio_writer_fill(uint16_t color);
 void lcd_gpio_writer_fill_rect(uint16_t x, uint16_t y, uint16_t width,
                                uint16_t height, uint16_t color);
 esp_err_t lcd_gpio_writer_draw(const uint16_t *pixels, size_t pixel_count);
+esp_err_t lcd_gpio_writer_draw_rgb332(const uint8_t *pixels,
+                                      size_t pixel_count);
 
 #ifdef __cplusplus
 }
 #endif
-

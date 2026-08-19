@@ -30,8 +30,8 @@
 #define LCD_PIN_BL         48
 
 #define LCD_BL_ON_LEVEL     1
-/* 8 MHz transfers a packed 800x480 RGB666 frame in about 72 ms. */
-#define LCD_PIXEL_CLOCK_HZ  (8 * 1000 * 1000)
+/* Runtime pixel path uses the menuconfig-selected I80 write clock. */
+#define LCD_PIXEL_CLOCK_HZ  (CONFIG_HANDHELD_LCD_PIXEL_CLOCK_MHZ * 1000 * 1000)
 
 #define LCD_H_RES          800
 #define LCD_V_RES          480
