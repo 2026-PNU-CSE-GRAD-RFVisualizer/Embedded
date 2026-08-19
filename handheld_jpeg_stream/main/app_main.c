@@ -9,6 +9,8 @@
 #include "freertos/task.h"
 #include "nvs_flash.h"
 
+#include "lcd_board_config.h"
+#include "lcd_gpio_writer.h"
 #include "jpeg_lcd_sink.h"
 #include "jpeg_stream_client.h"
 
@@ -16,6 +18,34 @@
 
 static const char *TAG = "handheld_jpeg";
 static EventGroupHandle_t s_wifi_events;
+
+static inline uint16_t rgb565(uint8_t red, uint8_t green, uint8_t blue)
+{
+    return ((uint16_t)(red & 0xF8) << 8) |
+           ((uint16_t)(green & 0xFC) << 3) |
+           ((uint16_t)blue >> 3);
+}
+
+static void show_boot_color_test(void)
+{
+    static const struct {
+        const char *name;
+        uint16_t color;
+    } colors[] = {
+        {"RED",   0xF800},
+        {"GREEN", 0x07E0},
+        {"BLUE",  0x001F},
+    };
+
+    for (size_t i = 0; i < sizeof(colors) / sizeof(colors[0]); ++i) {
+        ESP_LOGI(TAG, "boot LCD color test: %s", colors[i].name);
+        lcd_gpio_writer_fill(colors[i].color);
+        vTaskDelay(pdMS_TO_TICKS(500));
+    }
+
+    lcd_gpio_writer_fill(rgb565(0, 0, 0));
+    ESP_LOGI(TAG, "boot LCD color test complete; waiting for server JPEG");
+}
 
 static void wifi_event_handler(void *argument, esp_event_base_t event_base,
                                int32_t event_id, void *event_data)
@@ -80,6 +110,7 @@ void app_main(void)
     ESP_ERROR_CHECK(nvs_result);
 
     ESP_ERROR_CHECK(jpeg_lcd_sink_init());
+    show_boot_color_test();
 
     if (CONFIG_HANDHELD_WIFI_SSID[0] == '\0' ||
         CONFIG_JPEG_STREAM_SERVER_HOST[0] == '\0') {

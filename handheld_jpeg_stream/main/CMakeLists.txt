@@ -4,13 +4,13 @@ idf_component_register(
         "jpeg_lcd_sink.c"
         "jpeg_stream_client.c"
         "jpeg_stream_protocol.c"
-        "../../handheld_lcd_test/main/lcd_gpio_writer.c"
+        "lcd_gpio_writer.c"
     INCLUDE_DIRS
         "."
-        "../../handheld_lcd_test/main"
     REQUIRES
         esp_event
         esp_driver_gpio
+        esp_lcd
         esp_netif
         esp_timer
         esp_wifi
