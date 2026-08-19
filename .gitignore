@@ -2,6 +2,7 @@
 **/build/
 **/build_*/
 **/build-*/
+**/managed_components/
 *.elf
 *.hex
 *.bin

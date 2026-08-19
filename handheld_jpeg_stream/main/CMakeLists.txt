@@ -1,0 +1,19 @@
+idf_component_register(
+    SRCS
+        "app_main.c"
+        "jpeg_lcd_sink.c"
+        "jpeg_stream_client.c"
+        "jpeg_stream_protocol.c"
+        "../../handheld_lcd_test/main/lcd_gpio_writer.c"
+    INCLUDE_DIRS
+        "."
+        "../../handheld_lcd_test/main"
+    REQUIRES
+        esp_event
+        esp_driver_gpio
+        esp_netif
+        esp_timer
+        esp_wifi
+        nvs_flash
+        esp_jpeg
+)

@@ -1,0 +1,50 @@
+menu "RFVisualizer handheld JPEG stream"
+
+config HANDHELD_WIFI_SSID
+    string "Wi-Fi SSID"
+    default ""
+    help
+        Local device setting. Do not commit a real SSID.
+
+config HANDHELD_WIFI_PASSWORD
+    string "Wi-Fi password"
+    default ""
+    help
+        Local secret. Do not commit a real password or sdkconfig.
+
+config JPEG_STREAM_SERVER_HOST
+    string "Image relay server IPv4 address or host name"
+    default ""
+    help
+        Local device setting. Enter the PC running image_relay; do not commit
+        a site-specific address.
+
+config JPEG_STREAM_SERVER_PORT
+    int "Image relay viewer port"
+    range 1 65535
+    default 9102
+
+config JPEG_STREAM_MAX_FRAME_BYTES
+    int "Maximum JPEG payload bytes"
+    range 65536 2097152
+    default 524288
+    help
+        This embedded limit is deliberately lower than the relay's 8 MiB
+        protocol limit. Two buffers of this size are allocated in PSRAM.
+
+config JPEG_STREAM_RX_TIMEOUT_MS
+    int "TCP receive timeout (ms)"
+    range 1000 30000
+    default 5000
+
+config JPEG_STREAM_RX_TASK_STACK
+    int "Receiver task stack bytes"
+    range 4096 16384
+    default 6144
+
+config JPEG_STREAM_SINK_TASK_STACK
+    int "Frame sink task stack bytes"
+    range 4096 16384
+    default 6144
+
+endmenu

@@ -364,8 +364,8 @@ static void begin_full_frame(void)
     set_window(
         0,
         0,
-        LCD_V_RES - 1,  // 479
-        LCD_H_RES - 1   // 799
+        LCD_V_RES - 1,  // Native column end: 479
+        LCD_H_RES - 1   // Native page end: 799
     );
 
     write_command(NT35510_RAMWR);
@@ -456,7 +456,8 @@ esp_err_t lcd_gpio_writer_init(void)
              ddb[7]);
     controller_init_nt35510();
     ESP_LOGI(TAG,
-             "480x800 RGB666 packed stream: 3 transfers / 2 pixels");
+             "landscape 800x480, RGB666 packed stream: "
+             "3 transfers / 2 pixels");
     initialized = true;
     return ESP_OK;
 }
@@ -552,7 +553,7 @@ esp_err_t lcd_gpio_writer_draw(const uint16_t *pixels, size_t pixel_count)
                         "writer is not initialized");
     ESP_RETURN_ON_FALSE(pixel_count == (size_t)LCD_H_RES * LCD_V_RES,
                         ESP_ERR_INVALID_SIZE, TAG,
-                        "expected one complete 480x800 frame");
+                        "expected one complete 800x480 landscape frame");
 
     begin_full_frame();
     for (size_t i = 0; i < pixel_count; i += 2) {
