@@ -39,6 +39,10 @@ htmlcov/
 # Generated or machine-local files
 sdkconfig
 sdkconfig.old
+
+# Local Wi-Fi credentials for ESP32 RSSI timestamp synchronization
+rssi_esp32_to_stm32/esp32_node/main/time_credentials.h
+rssi_esp32_to_stm32/esp32_gateway/main/time_credentials.h
 *.log
 *.binlog
 *.tmp

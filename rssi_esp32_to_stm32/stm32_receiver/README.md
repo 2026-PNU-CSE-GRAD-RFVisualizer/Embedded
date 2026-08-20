@@ -10,7 +10,10 @@ Files:
 - `stm32_uart_receiver_example.c`: HAL UART interrupt integration example.
 - `test_parser_host.c`: PC host test.
 
-The parser and preprocessor use no dynamic allocation.
+The parser and preprocessor use no dynamic allocation. Packet/UART protocol version 2
+preserves the originating node's Unix epoch measurement time in
+`readings[].timestamp`; a zero timestamp is invalid and is accompanied by
+`RSSI_ERR_TIME_INVALID`.
 
 ## Integration Steps
 
@@ -18,6 +21,8 @@ The parser and preprocessor use no dynamic allocation.
 2. Include the corresponding headers.
 3. In the UART RX interrupt callback, feed each byte to `rssi_parser_feed_byte()`.
 4. On `RSSI_PARSE_OK`, call `rssi_preprocessor_update()`.
-5. Periodically call `mqtt_payload_build_snapshot()` and publish the resulting string through the selected MQTT/network module.
+5. Periodically call `mqtt_payload_build_snapshot()`, passing monotonic uptime for
+   timeout calculations and Unix epoch milliseconds for snapshot creation time,
+   then publish the resulting string through the selected MQTT/network module.
 
 The included MQTT formatter only builds the payload string; it does not depend on any MQTT client library.

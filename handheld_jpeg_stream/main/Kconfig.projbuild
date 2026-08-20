@@ -2,7 +2,7 @@ menu "RFVisualizer handheld JPEG stream"
 
 config HANDHELD_LOCAL_10FPS_TEST
     bool "Run embedded 10-frame / 10 FPS LCD animation test"
-    default y
+    default n
     help
         Show ten embedded 800x480 baseline JPEG frames at 100 ms intervals
         forever. Wi-Fi and server streaming are skipped while this is enabled.
@@ -41,12 +41,13 @@ config JPEG_STREAM_SERVER_PORT
     default 9102
 
 config JPEG_STREAM_MAX_FRAME_BYTES
-    int "Maximum JPEG payload bytes"
+    int "Maximum image payload bytes"
     range 65536 2097152
     default 524288
     help
         This embedded limit is deliberately lower than the relay's 8 MiB
-        protocol limit. Two buffers of this size are allocated in PSRAM.
+        protocol limit. It covers JPEG and compressed RGB332 payloads. Two
+        buffers of this size are allocated in PSRAM.
 
 config JPEG_STREAM_RX_TIMEOUT_MS
     int "TCP receive timeout (ms)"
@@ -61,6 +62,9 @@ config JPEG_STREAM_RX_TASK_STACK
 config JPEG_STREAM_SINK_TASK_STACK
     int "Frame sink task stack bytes"
     range 4096 16384
-    default 6144
+    default 16384
+    help
+        The RGB332 zlib path calls the ROM miniz inflater, whose decompressor
+        state requires substantially more stack than the JPEG-only path.
 
 endmenu

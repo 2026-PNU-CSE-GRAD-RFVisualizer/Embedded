@@ -6,7 +6,7 @@
 #include <stddef.h>
 
 #define RSSI_PACKET_MAGIC       0x52465349u
-#define RSSI_PACKET_VERSION     1u
+#define RSSI_PACKET_VERSION     2u
 
 typedef struct __attribute__((packed)) {
     uint32_t magic;
@@ -15,6 +15,7 @@ typedef struct __attribute__((packed)) {
     uint16_t payload_len;
     uint32_t seq;
     uint32_t uptime_ms;
+    uint64_t measurement_timestamp_ms;
     uint8_t ap_bssid[6];
     int8_t rssi_raw_dbm;
     int16_t rssi_filtered_x10;

@@ -7,6 +7,20 @@
 #define TARGET_AP_SSID              "바부바부쟝"
 #define TARGET_AP_BSSID             {0xB0, 0x38, 0x6C, 0x52, 0xBA, 0xFE}
 
+/* Keep the real password in an untracked local override; do not commit secrets. */
+#if __has_include("time_credentials.h")
+#include "time_credentials.h"
+#endif
+#ifndef GATEWAY_TIME_SYNC_ENABLE
+#define GATEWAY_TIME_SYNC_ENABLE     1
+#endif
+#define GATEWAY_TIME_WIFI_SSID       TARGET_AP_SSID
+#ifndef GATEWAY_TIME_WIFI_PASSWORD
+#define GATEWAY_TIME_WIFI_PASSWORD   ""
+#endif
+#define GATEWAY_TIME_SNTP_SERVER     "pool.ntp.org"
+#define GATEWAY_TIME_VALID_AFTER_MS  1704067200000ULL
+
 #define STM32_UART_NUM              UART_NUM_1
 #define STM32_UART_BAUDRATE         115200
 #define STM32_UART_TX_GPIO          17

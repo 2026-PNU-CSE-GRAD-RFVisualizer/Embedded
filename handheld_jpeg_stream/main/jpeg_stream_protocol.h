@@ -7,6 +7,11 @@
 #define JPEG_STREAM_VERSION     1u
 #define JPEG_STREAM_HEADER_SIZE 22u
 
+/* Version 1 keeps the same 22-byte header. The flags byte selects payload
+ * encoding so existing JPEG producers remain compatible. */
+#define JPEG_STREAM_FLAG_JPEG        0x00u
+#define JPEG_STREAM_FLAG_RGB332_ZLIB 0x01u
+
 typedef struct {
     uint8_t flags;
     uint32_t seq;
@@ -28,4 +33,3 @@ jpeg_stream_header_result_t jpeg_stream_parse_header(
     jpeg_stream_header_t *out);
 
 const char *jpeg_stream_header_result_name(jpeg_stream_header_result_t result);
-

@@ -56,9 +56,14 @@ Edit `esp32_node/main/node_config.h` for each node:
 - `TARGET_AP_CHANNEL`
 - `ESPNOW_WIFI_CHANNEL`
 - `GATEWAY_ESPNOW_MAC`
+- `NODE_TIME_WIFI_PASSWORD` in an untracked `time_credentials.h`
 
 Use the same Wi-Fi channel for the target AP and ESP-NOW during the first prototype.
 The current deployment scans `U1MU2_2F` only on channel 6 to avoid ESP-NOW channel hopping.
+Each node also joins that AP and starts SNTP so it can stamp the RSSI measurement itself.
+Copy `main/time_credentials.example.h` to `main/time_credentials.h` and set the AP
+password there; the local file is ignored by Git. Until synchronization succeeds, the node transmits
+`measurement_timestamp_ms=0` with `RSSI_ERR_TIME_INVALID` set.
 
 Build and flash:
 
@@ -78,6 +83,9 @@ idf.py set-target esp32s3
 ## ESP32 Gateway Setup
 
 Edit `esp32_gateway/main/gateway_config.h` if UART pins or channel need to change.
+Copy `main/time_credentials.example.h` to `main/time_credentials.h` and configure
+`GATEWAY_TIME_WIFI_PASSWORD` there so
+the local RSSI node 5 can also produce a measurement timestamp.
 
 The default deployment uses the gateway as local RSSI node 5:
 
@@ -133,13 +141,13 @@ idf.py -p <PORT> flash monitor
 The gateway forwards each valid node packet to STM32 as:
 
 ```text
-$RSSI,<node_id>,<seq>,<uptime_ms>,<rssi_raw>,<rssi_filtered_x10>,<sample_count>,<error_flags>*<checksum>
+$RSSI,<node_id>,<seq>,<uptime_ms>,<measurement_timestamp_ms>,<rssi_raw>,<rssi_filtered_x10>,<sample_count>,<error_flags>*<checksum>
 ```
 
 Example:
 
 ```text
-$RSSI,1,15234,3600123,-62,-608,5,0*5A
+$RSSI,1,15234,3600123,1785720000123,-62,-608,5,0*2F
 ```
 
 ## STM32 Integration
@@ -155,7 +163,7 @@ Copy these files into the STM32 project:
 
 Use `stm32_uart_receiver_example.c` as a HAL UART interrupt integration example.
 
-The STM32 parser has no dynamic allocation. It verifies the line checksum, parses `$RSSI` messages, updates a node table, and can produce an MQTT-ready JSON payload string.
+The STM32 parser has no dynamic allocation. It verifies the line checksum, parses `$RSSI` messages, preserves each node's measurement timestamp, updates a node table, and can produce an MQTT-ready JSON payload string. JSON schema version 2 places the measurement time in each `readings[].timestamp`; the top-level `timestamp` remains the snapshot creation time.
 
 ## Host Parser Test
 
@@ -176,3 +184,4 @@ On Windows with MinGW, the output executable may be `test_parser_host.exe`.
 3. RSSI is unstable indoors and should not be treated as direct distance.
 4. STM32 board-specific UART and clock setup must be generated separately in CubeMX or an existing HAL project.
 5. The STM32 code currently creates MQTT-ready payload text; actual MQTT transport depends on the network module selected later.
+6. SNTP requires IP connectivity to the target AP. Hardware tests must confirm synchronization before treating timestamps as valid.

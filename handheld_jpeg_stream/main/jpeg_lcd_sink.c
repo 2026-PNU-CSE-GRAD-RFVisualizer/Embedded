@@ -16,12 +16,30 @@
 
 static const char *TAG = "jpeg_lcd";
 static uint16_t *s_rgb565_frame;
+static uint8_t *s_jpeg_work_buffer;
 static bool s_initialized;
+
+#define JPEG_WORK_BUFFER_BYTES (16U * 1024U)
 
 static const size_t RGB565_PIXEL_COUNT =
     (size_t)LCD_H_RES * (size_t)LCD_V_RES;
 static const size_t RGB565_FRAME_BYTES =
     (size_t)LCD_H_RES * (size_t)LCD_V_RES * sizeof(uint16_t);
+
+static void upscale_rgb565_in_place(uint16_t source_width,
+                                    uint16_t source_height)
+{
+    /* Expand from the end so destination pixels cannot overwrite source
+     * pixels that have not been consumed yet. */
+    for (size_t y = LCD_V_RES; y-- > 0;) {
+        const size_t source_y = y * source_height / LCD_V_RES;
+        for (size_t x = LCD_H_RES; x-- > 0;) {
+            const size_t source_x = x * source_width / LCD_H_RES;
+            s_rgb565_frame[y * LCD_H_RES + x] =
+                s_rgb565_frame[source_y * source_width + source_x];
+        }
+    }
+}
 
 esp_err_t jpeg_lcd_sink_init(void)
 {
@@ -46,6 +64,16 @@ esp_err_t jpeg_lcd_sink_init(void)
                         "failed to allocate %u-byte RGB565 PSRAM frame",
                         (unsigned)RGB565_FRAME_BYTES);
 
+    /* esp_jpeg's automatic 3.1 kB scratch allocation is too small for the
+     * external decoder configured for RGB565 and some optimized Huffman
+     * tables. Keep one internal-RAM work buffer and reuse it every frame. */
+    s_jpeg_work_buffer = heap_caps_aligned_alloc(
+        16, JPEG_WORK_BUFFER_BYTES,
+        MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    ESP_RETURN_ON_FALSE(s_jpeg_work_buffer != NULL, ESP_ERR_NO_MEM, TAG,
+                        "failed to allocate %u-byte JPEG work buffer",
+                        (unsigned)JPEG_WORK_BUFFER_BYTES);
+
     ESP_RETURN_ON_ERROR(lcd_gpio_writer_init(), TAG,
                         "NT35510 initialization failed");
     lcd_gpio_writer_fill(0x0000);
@@ -53,8 +81,9 @@ esp_err_t jpeg_lcd_sink_init(void)
     s_initialized = true;
 
     ESP_LOGI(TAG, "LCD ready: landscape=%ux%u, "
-             "RGB565 buffer=%u bytes in PSRAM",
-             LCD_H_RES, LCD_V_RES, (unsigned)RGB565_FRAME_BYTES);
+             "RGB565 buffer=%u bytes in PSRAM, JPEG work=%u bytes internal",
+             LCD_H_RES, LCD_V_RES, (unsigned)RGB565_FRAME_BYTES,
+             (unsigned)JPEG_WORK_BUFFER_BYTES);
     return ESP_OK;
 }
 
@@ -84,10 +113,11 @@ static esp_err_t decode_rgb565(const jpeg_stream_frame_t *frame,
     ESP_RETURN_ON_ERROR(result, TAG, "seq=%lu JPEG header decode failed",
                         (unsigned long)frame->seq);
 
-    ESP_RETURN_ON_FALSE(image_info.width == LCD_H_RES &&
-                        image_info.height == LCD_V_RES,
+    ESP_RETURN_ON_FALSE(image_info.width > 0 && image_info.height > 0 &&
+                        image_info.width <= LCD_H_RES &&
+                        image_info.height <= LCD_V_RES,
                         ESP_ERR_INVALID_SIZE, TAG,
-                        "seq=%lu resolution %ux%u; expected %ux%u",
+                        "seq=%lu resolution %ux%u exceeds LCD %ux%u",
                         (unsigned long)frame->seq,
                         image_info.width, image_info.height,
                         LCD_H_RES, LCD_V_RES);
@@ -108,23 +138,36 @@ static esp_err_t decode_rgb565(const jpeg_stream_frame_t *frame,
         .flags = {
             .swap_color_bytes = 0,
         },
+        .advanced = {
+            .working_buffer = s_jpeg_work_buffer,
+            .working_buffer_size = JPEG_WORK_BUFFER_BYTES,
+        },
     };
     esp_jpeg_image_output_t decoded = {0};
     const int64_t decode_start_us = esp_timer_get_time();
     result = esp_jpeg_decode(&decode_config, &decoded);
     *decode_elapsed_us = esp_timer_get_time() - decode_start_us;
     ESP_RETURN_ON_ERROR(result, TAG,
-                        "seq=%lu JPEG decode failed (progressive JPEG unsupported)",
+                        "seq=%lu JPEG decode failed",
                         (unsigned long)frame->seq);
 
-    ESP_RETURN_ON_FALSE(decoded.width == LCD_H_RES &&
-                        decoded.height == LCD_V_RES &&
-                        decoded.output_len == RGB565_FRAME_BYTES,
+    const size_t decoded_bytes =
+        (size_t)decoded.width * decoded.height * sizeof(uint16_t);
+    ESP_RETURN_ON_FALSE(decoded.width == image_info.width &&
+                        decoded.height == image_info.height &&
+                        decoded.output_len == decoded_bytes,
                         ESP_ERR_INVALID_SIZE, TAG,
                         "seq=%lu decoder output mismatch: %ux%u, %u bytes",
                         (unsigned long)frame->seq,
                         decoded.width, decoded.height,
                         (unsigned)decoded.output_len);
+
+    if (decoded.width != LCD_H_RES || decoded.height != LCD_V_RES) {
+        upscale_rgb565_in_place(decoded.width, decoded.height);
+        ESP_LOGI(TAG, "seq=%lu scaled %ux%u -> %ux%u",
+                 (unsigned long)frame->seq,
+                 decoded.width, decoded.height, LCD_H_RES, LCD_V_RES);
+    }
 
     return ESP_OK;
 }

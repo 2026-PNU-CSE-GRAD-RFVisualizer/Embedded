@@ -14,6 +14,7 @@ typedef struct {
     uint32_t last_seq;
     uint32_t last_update_ms;
     uint32_t node_uptime_ms;
+    uint64_t measurement_timestamp_ms;
     int8_t last_raw_rssi;
     int16_t last_filtered_x10;
     uint8_t sample_count;

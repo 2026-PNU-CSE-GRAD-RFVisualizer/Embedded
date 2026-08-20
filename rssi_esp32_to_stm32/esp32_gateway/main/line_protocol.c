@@ -1,5 +1,6 @@
 #include "line_protocol.h"
 
+#include <inttypes.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -23,10 +24,11 @@ int line_protocol_make_rssi_line(char *out, size_t out_len, const rssi_node_pack
     char payload[96];
     int written = snprintf(payload,
                            sizeof(payload),
-                           "RSSI,%u,%lu,%lu,%d,%d,%u,%u",
+                           "RSSI,%u,%lu,%lu,%" PRIu64 ",%d,%d,%u,%u",
                            packet->node_id,
                            (unsigned long)packet->seq,
                            (unsigned long)packet->uptime_ms,
+                           packet->measurement_timestamp_ms,
                            packet->rssi_raw_dbm,
                            packet->rssi_filtered_x10,
                            packet->sample_count,

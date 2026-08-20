@@ -13,6 +13,8 @@
 #include "lcd_gpio_writer.h"
 #include "jpeg_lcd_sink.h"
 #include "jpeg_stream_client.h"
+#include "jpeg_stream_protocol.h"
+#include "rgb332_zlib_sink.h"
 #if CONFIG_HANDHELD_LOCAL_10FPS_TEST
 #include "local_animation_test.h"
 #endif
@@ -22,6 +24,7 @@
 static const char *TAG = "handheld_jpeg";
 static EventGroupHandle_t s_wifi_events;
 
+#if 0  /* Disabled: boot RGB test can be confused with server frames. */
 static inline uint16_t rgb565(uint8_t red, uint8_t green, uint8_t blue)
 {
     return ((uint16_t)(red & 0xF8) << 8) |
@@ -49,6 +52,7 @@ static void show_boot_color_test(void)
     lcd_gpio_writer_fill(rgb565(0, 0, 0));
     ESP_LOGI(TAG, "boot LCD color test complete");
 }
+#endif
 
 static void wifi_event_handler(void *argument, esp_event_base_t event_base,
                                int32_t event_id, void *event_data)
@@ -95,7 +99,12 @@ static void wifi_start(void)
 static void on_jpeg_frame(const jpeg_stream_frame_t *frame, void *user_context)
 {
     (void)user_context;
-    const esp_err_t result = jpeg_lcd_sink_render(frame);
+    esp_err_t result;
+    if (frame->flags == JPEG_STREAM_FLAG_RGB332_ZLIB) {
+        result = rgb332_zlib_sink_render(frame);
+    } else {
+        result = jpeg_lcd_sink_render(frame);
+    }
     if (result != ESP_OK) {
         ESP_LOGW(TAG, "frame seq=%lu was not displayed: %s",
                  (unsigned long)frame->seq, esp_err_to_name(result));
@@ -113,7 +122,7 @@ void app_main(void)
     ESP_ERROR_CHECK(nvs_result);
 
     ESP_ERROR_CHECK(jpeg_lcd_sink_init());
-    show_boot_color_test();
+    // show_boot_color_test();  // Disabled while testing server RGB332 frames.
 
 #if CONFIG_HANDHELD_LOCAL_10FPS_TEST
     ESP_LOGI(TAG, "local 10 FPS animation test enabled; Wi-Fi is skipped");

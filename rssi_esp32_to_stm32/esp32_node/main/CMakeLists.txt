@@ -4,6 +4,7 @@ idf_component_register(
         "rssi_measure.c"
         "rssi_filter.c"
         "espnow_packet.c"
+        "node_time.c"
     INCLUDE_DIRS "."
     REQUIRES
         esp_wifi
@@ -11,4 +12,5 @@ idf_component_register(
         esp_netif
         nvs_flash
         esp_timer
+        lwip
 )

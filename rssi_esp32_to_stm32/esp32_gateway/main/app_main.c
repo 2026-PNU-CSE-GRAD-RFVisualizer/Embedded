@@ -11,6 +11,7 @@
 #include "espnow_receiver.h"
 #include "gateway_config.h"
 #include "gateway_rssi.h"
+#include "gateway_time.h"
 #include "line_protocol.h"
 #include "uart_forwarder.h"
 
@@ -165,10 +166,13 @@ static void fake_rssi_task(void *arg)
         packet.node_id = node_id;
         packet.seq = ++seq[node_index];
         packet.uptime_ms = (uint32_t)(esp_timer_get_time() / 1000ULL);
+        packet.measurement_timestamp_ms = gateway_time_now_ms();
         packet.rssi_raw_dbm = raw;
         packet.rssi_filtered_x10 = filtered_x10;
         packet.sample_count = 5;
-        packet.error_flags = 0;
+        packet.error_flags = packet.measurement_timestamp_ms == 0
+                                 ? RSSI_ERR_TIME_INVALID
+                                 : RSSI_ERR_NONE;
 
         s_stats.rx_count++;
         update_node_state(&packet);
@@ -197,10 +201,14 @@ static void gateway_local_rssi_task(void *arg)
         packet.node_id = GATEWAY_LOCAL_NODE_ID;
         packet.seq = ++seq;
         packet.uptime_ms = (uint32_t)(esp_timer_get_time() / 1000ULL);
+        packet.measurement_timestamp_ms = gateway_time_now_ms();
         packet.rssi_raw_dbm = sample.raw_dbm;
         packet.rssi_filtered_x10 = sample.filtered_x10;
         packet.sample_count = sample.sample_count;
         packet.error_flags = sample.error_flags;
+        if (packet.measurement_timestamp_ms == 0) {
+            packet.error_flags |= RSSI_ERR_TIME_INVALID;
+        }
 
         s_stats.rx_count++;
         update_node_state(&packet);
@@ -224,6 +232,7 @@ void app_main(void)
 {
     ESP_ERROR_CHECK(uart_forwarder_init(&s_uart_queue));
     ESP_ERROR_CHECK(espnow_receiver_init(&s_rx_queue, &s_stats));
+    ESP_ERROR_CHECK(gateway_time_sync_start());
 
     xTaskCreate(uart_forwarder_task, "uart_forwarder", 4096, NULL, 5, NULL);
 #if GATEWAY_FAKE_RSSI_TEST

@@ -32,10 +32,10 @@ typedef struct {
     uint32_t stale_frames_dropped;
     uint32_t sequence_gaps;
     uint32_t invalid_jpegs;
+    uint32_t invalid_payloads;
     uint32_t stream_errors;
     uint32_t reconnects;
 } jpeg_stream_client_stats_t;
 
 esp_err_t jpeg_stream_client_start(const jpeg_stream_client_config_t *config);
 void jpeg_stream_client_get_stats(jpeg_stream_client_stats_t *out);
-

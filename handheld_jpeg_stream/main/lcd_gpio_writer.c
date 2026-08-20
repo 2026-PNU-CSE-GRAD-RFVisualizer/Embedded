@@ -47,6 +47,7 @@ static rgb332_lookup_t rgb332_lookup[256];
 #define LCD_FRAME_PIXELS ((size_t)LCD_H_RES * LCD_V_RES)
 #define LCD_FRAME_WORDS  (LCD_FRAME_PIXELS * 3 / 2)
 #define LCD_FRAME_BYTES  (LCD_FRAME_WORDS * sizeof(uint16_t))
+#define LCD_GDMA_DESCRIPTOR_BYTES 4095U
 
 /*
  * This panel revision keeps consuming three 8-bit colour components even
@@ -413,7 +414,12 @@ static esp_err_t start_i80_dma(void)
             LCD_PIN_D12, LCD_PIN_D13, LCD_PIN_D14, LCD_PIN_D15,
         },
         .bus_width = LCD_BUS_WIDTH,
-        .max_transfer_bytes = LCD_FRAME_BYTES,
+        /* Reserve two complete link sets plus one descriptor for the I80
+         * driver's dummy quick-trans-done trigger. Without the extra node the
+         * pool is exactly one descriptor short while the previous frame is
+         * still DMA-owned. */
+        .max_transfer_bytes =
+            LCD_FRAME_BYTES * 2 + LCD_GDMA_DESCRIPTOR_BYTES,
         .dma_burst_size = 32,
     };
     ESP_RETURN_ON_ERROR(esp_lcd_new_i80_bus(&bus_config, &i80_bus), TAG,
@@ -446,28 +452,34 @@ static esp_err_t start_i80_dma(void)
         "failed to create I80 panel IO");
 
     dma_frame = esp_lcd_i80_alloc_draw_buffer(
-        panel_io, LCD_FRAME_BYTES, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+        panel_io, LCD_FRAME_BYTES,
+        MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     ESP_RETURN_ON_FALSE(dma_frame != NULL, ESP_ERR_NO_MEM, TAG,
                         "failed to allocate %u-byte PSRAM DMA frame",
                         (unsigned)LCD_FRAME_BYTES);
 
-    ESP_LOGI(TAG, "I80 DMA ready: %u Hz, one %u-byte PSRAM frame",
-             LCD_PIXEL_CLOCK_HZ, (unsigned)LCD_FRAME_BYTES);
+    ESP_LOGI(TAG,
+             "I80 DMA ready: %u Hz, one %u-byte full frame, "
+             "%u-byte descriptor budget, full-window reset + single RAMWR",
+             LCD_PIXEL_CLOCK_HZ, (unsigned)LCD_FRAME_BYTES,
+             (unsigned)(LCD_FRAME_BYTES * 2 +
+                        LCD_GDMA_DESCRIPTOR_BYTES));
     return ESP_OK;
 }
 
-static esp_err_t __attribute__((unused)) dma_write_reg(uint16_t reg,
-                                                       uint8_t value)
+static esp_err_t dma_write_reg(uint16_t reg, uint8_t value)
 {
     const uint16_t word = value;
+    /* Match the verified FSMC/GPIO sequence: register address and data are
+     * independent accesses, with CS deasserted between them. */
     ESP_RETURN_ON_ERROR(
         esp_lcd_panel_io_tx_param(panel_io, reg, NULL, 0), TAG,
         "register command 0x%04X failed", reg);
     return esp_lcd_panel_io_tx_param(panel_io, -1, &word, sizeof(word));
 }
 
-static esp_err_t __attribute__((unused)) dma_set_window(
-    uint16_t x_start, uint16_t y_start, uint16_t x_end, uint16_t y_end)
+static esp_err_t dma_set_window(uint16_t x_start, uint16_t y_start,
+                                uint16_t x_end, uint16_t y_end)
 {
     ESP_RETURN_ON_ERROR(dma_write_reg(NT35510_CASET + 0, x_start >> 8),
                         TAG, "CASET[0] failed");
@@ -488,10 +500,7 @@ static esp_err_t __attribute__((unused)) dma_set_window(
 
 static esp_err_t dma_begin_full_frame(void)
 {
-    /* The full-screen window is programmed once with the verified GPIO
-     * register sequence before the pins are handed to the I80 peripheral.
-     * RAMWR on the first DMA tile resets GRAM to that window's origin. */
-    return ESP_OK;
+    return dma_set_window(0, 0, LCD_H_RES - 1, LCD_V_RES - 1);
 }
 
 esp_err_t lcd_gpio_writer_init(void)
@@ -599,8 +608,6 @@ static esp_err_t dma_send_pixels(const uint16_t *pixels, uint16_t solid_color,
         pack_rgb666_pair(first, second, &dma_frame[(i / 2) * 3]);
     }
 
-    /* One command and one uninterrupted DMA transaction remove all tile/CS
-     * boundaries from the 800x480 frame. */
     ESP_RETURN_ON_ERROR(
         esp_lcd_panel_io_tx_color(panel_io, NT35510_RAMWR,
                                   dma_frame, LCD_FRAME_BYTES),
@@ -668,6 +675,9 @@ esp_err_t lcd_gpio_writer_draw_rgb332(const uint8_t *pixels,
     ESP_RETURN_ON_FALSE(pixel_count == LCD_FRAME_PIXELS,
                         ESP_ERR_INVALID_SIZE, TAG,
                         "expected one complete 800x480 RGB332 frame");
+
+    ESP_RETURN_ON_ERROR(dma_begin_full_frame(), TAG,
+                        "RGB332 full-frame window reset failed");
 
     for (size_t i = 0; i < pixel_count; i += 2) {
         const rgb332_lookup_t *first = &rgb332_lookup[pixels[i]];

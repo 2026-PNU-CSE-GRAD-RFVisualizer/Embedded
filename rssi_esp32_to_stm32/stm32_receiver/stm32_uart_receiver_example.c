@@ -47,13 +47,17 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 void RssiReceiver_Periodic_1s(void)
 {
     uint32_t now_ms = HAL_GetTick();
+    uint64_t snapshot_timestamp_ms = 0;
     rssi_preprocessor_update_timeouts(&s_rssi_ctx, now_ms);
+
+    /* Replace 0 with Unix epoch milliseconds from the board RTC, if available. */
 
     int len = mqtt_payload_build_snapshot(s_mqtt_payload,
                                           sizeof(s_mqtt_payload),
                                           "gw-01",
                                           &s_rssi_ctx,
-                                          now_ms);
+                                          now_ms,
+                                          snapshot_timestamp_ms);
     if (len > 0) {
         /*
          * Publish s_mqtt_payload here using the selected MQTT transport.

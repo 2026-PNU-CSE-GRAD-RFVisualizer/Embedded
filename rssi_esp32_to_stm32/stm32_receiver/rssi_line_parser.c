@@ -1,6 +1,7 @@
 #include "rssi_line_parser.h"
 
 #include <ctype.h>
+#include <limits.h>
 #include <stddef.h>
 #include <stdlib.h>
 #include <string.h>
@@ -44,11 +45,29 @@ static int hex_value(char ch)
 static int parse_u32(const char *text, uint32_t *out)
 {
     char *end = NULL;
+    if (text[0] == '-') {
+        return 0;
+    }
     unsigned long value = strtoul(text, &end, 10);
     if (end == text || *end != '\0' || value > 0xFFFFFFFFul) {
         return 0;
     }
     *out = (uint32_t)value;
+    return 1;
+}
+
+static int parse_u64(const char *text, uint64_t *out)
+{
+    char *end = NULL;
+    if (text[0] == '-') {
+        return 0;
+    }
+
+    unsigned long long value = strtoull(text, &end, 10);
+    if (end == text || *end != '\0' || value > UINT64_MAX) {
+        return 0;
+    }
+    *out = (uint64_t)value;
     return 1;
 }
 
@@ -141,11 +160,11 @@ rssi_parse_result_t rssi_parse_line(const char *line, rssi_measurement_t *out_me
         return RSSI_PARSE_CHECKSUM_ERROR;
     }
 
-    char *fields[8] = {0};
+    char *fields[9] = {0};
     uint8_t field_count = 0;
     int extra_field = 0;
     char *cursor = (char *)payload;
-    while (cursor != NULL && field_count < 8u) {
+    while (cursor != NULL && field_count < 9u) {
         fields[field_count++] = cursor;
         char *comma = strchr(cursor, ',');
         if (comma == NULL) {
@@ -153,12 +172,12 @@ rssi_parse_result_t rssi_parse_line(const char *line, rssi_measurement_t *out_me
         }
         *comma = '\0';
         cursor = comma + 1;
-        if (field_count == 8u && cursor[0] != '\0') {
+        if (field_count == 9u && cursor[0] != '\0') {
             extra_field = 1;
         }
     }
 
-    if (field_count != 8u || extra_field || strcmp(fields[0], "RSSI") != 0) {
+    if (field_count != 9u || extra_field || strcmp(fields[0], "RSSI") != 0) {
         return RSSI_PARSE_FORMAT_ERROR;
     }
 
@@ -177,22 +196,25 @@ rssi_parse_result_t rssi_parse_line(const char *line, rssi_measurement_t *out_me
     if (!parse_u32(fields[3], &parsed.uptime_ms)) {
         return RSSI_PARSE_FORMAT_ERROR;
     }
-    if (!parse_i32(fields[4], &i32) || i32 < -128 || i32 > 127) {
+    if (!parse_u64(fields[4], &parsed.measurement_timestamp_ms)) {
+        return RSSI_PARSE_FORMAT_ERROR;
+    }
+    if (!parse_i32(fields[5], &i32) || i32 < -128 || i32 > 127) {
         return RSSI_PARSE_FORMAT_ERROR;
     }
     parsed.rssi_raw_dbm = (int8_t)i32;
 
-    if (!parse_i32(fields[5], &i32) || i32 < -32768 || i32 > 32767) {
+    if (!parse_i32(fields[6], &i32) || i32 < -32768 || i32 > 32767) {
         return RSSI_PARSE_FORMAT_ERROR;
     }
     parsed.rssi_filtered_x10 = (int16_t)i32;
 
-    if (!parse_u32(fields[6], &u32) || u32 > 255u) {
+    if (!parse_u32(fields[7], &u32) || u32 > 255u) {
         return RSSI_PARSE_FORMAT_ERROR;
     }
     parsed.sample_count = (uint8_t)u32;
 
-    if (!parse_u32(fields[7], &u32) || u32 > 65535u) {
+    if (!parse_u32(fields[8], &u32) || u32 > 65535u) {
         return RSSI_PARSE_FORMAT_ERROR;
     }
     parsed.error_flags = (uint16_t)u32;

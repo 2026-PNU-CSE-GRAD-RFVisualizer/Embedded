@@ -47,6 +47,7 @@ bool rssi_preprocessor_update(rssi_preprocessor_t *ctx,
     node->last_seq = measurement->seq;
     node->last_update_ms = now_ms;
     node->node_uptime_ms = measurement->uptime_ms;
+    node->measurement_timestamp_ms = measurement->measurement_timestamp_ms;
     node->last_raw_rssi = measurement->rssi_raw_dbm;
     node->last_filtered_x10 = measurement->rssi_filtered_x10;
     node->sample_count = measurement->sample_count;

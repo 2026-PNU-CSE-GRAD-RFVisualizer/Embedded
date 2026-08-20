@@ -13,6 +13,7 @@
 
 #include "espnow_packet.h"
 #include "node_config.h"
+#include "node_time.h"
 #include "rssi_filter.h"
 #include "rssi_measure.h"
 
@@ -21,6 +22,7 @@ typedef struct {
     int16_t filtered_x10;
     uint8_t sample_count;
     uint16_t error_flags;
+    uint64_t measurement_timestamp_ms;
 } latest_rssi_t;
 
 static const char *TAG = "rssi_node";
@@ -111,6 +113,11 @@ static void rssi_measure_task(void *arg)
             flags |= RSSI_ERR_LOW_HEAP;
         }
 
+        uint64_t measurement_timestamp_ms = node_time_now_ms();
+        if (measurement_timestamp_ms == 0) {
+            flags |= RSSI_ERR_TIME_INVALID;
+        }
+
         xSemaphoreTake(s_latest_mutex, portMAX_DELAY);
         if (err == ESP_OK) {
             s_latest.raw_dbm = raw;
@@ -118,6 +125,7 @@ static void rssi_measure_task(void *arg)
         s_latest.filtered_x10 = avg_x10;
         s_latest.sample_count = sample_count;
         s_latest.error_flags = flags;
+        s_latest.measurement_timestamp_ms = measurement_timestamp_ms;
         xSemaphoreGive(s_latest_mutex);
 
         ESP_LOGI(TAG, "raw=%d filtered_x10=%d count=%u flags=0x%04X",
@@ -144,6 +152,7 @@ static void espnow_tx_task(void *arg)
         packet.node_id = NODE_ID;
         packet.seq = ++seq;
         packet.uptime_ms = (uint32_t)(esp_timer_get_time() / 1000ULL);
+        packet.measurement_timestamp_ms = latest.measurement_timestamp_ms;
         memcpy(packet.ap_bssid, k_target_bssid, sizeof(packet.ap_bssid));
         packet.rssi_raw_dbm = latest.raw_dbm;
         packet.rssi_filtered_x10 = latest.filtered_x10;
@@ -178,6 +187,9 @@ static void health_task(void *arg)
                  (unsigned long)esp_get_free_heap_size(),
                  (unsigned long)s_send_ok_count,
                  (unsigned long)s_send_fail_count);
+        if (!node_time_is_valid()) {
+            ESP_LOGW(TAG, "Unix time is not synchronized; timestamp=0 and TIME_INVALID are emitted");
+        }
         vTaskDelay(pdMS_TO_TICKS(5000));
     }
 }
@@ -185,6 +197,7 @@ static void health_task(void *arg)
 void app_main(void)
 {
     ESP_ERROR_CHECK(rssi_measure_init_wifi());
+    ESP_ERROR_CHECK(node_time_sync_start());
 
     s_latest_mutex = xSemaphoreCreateMutex();
     s_radio_mutex = xSemaphoreCreateMutex();

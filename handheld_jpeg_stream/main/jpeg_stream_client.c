@@ -49,6 +49,18 @@ static bool is_jpeg(const uint8_t *data, size_t length)
            data[length - 2] == 0xFF && data[length - 1] == 0xD9;
 }
 
+static bool is_supported_payload(const jpeg_stream_header_t *header,
+                                 const uint8_t *data)
+{
+    if (header->payload_length == 0) {
+        return false;
+    }
+    if (header->flags == JPEG_STREAM_FLAG_JPEG) {
+        return is_jpeg(data, header->payload_length);
+    }
+    return header->flags == JPEG_STREAM_FLAG_RGB332_ZLIB;
+}
+
 static bool recv_exactly(int sock, uint8_t *destination, size_t length)
 {
     size_t received = 0;
@@ -179,11 +191,17 @@ static bool receive_one_frame(int sock, uint32_t *last_seq, bool *have_seq)
         return false;
     }
 
-    if (!is_jpeg(buffer->data, header.payload_length)) {
-        ESP_LOGW(TAG, "seq=%lu is not a complete JPEG (%lu bytes)",
+    if (!is_supported_payload(&header, buffer->data)) {
+        ESP_LOGW(TAG, "seq=%lu has unsupported/invalid flags=0x%02x "
+                      "(%lu bytes)",
                  (unsigned long)header.seq,
+                 header.flags,
                  (unsigned long)header.payload_length);
-        s_client.stats.invalid_jpegs++;
+        if (header.flags == JPEG_STREAM_FLAG_JPEG) {
+            s_client.stats.invalid_jpegs++;
+        } else {
+            s_client.stats.invalid_payloads++;
+        }
         release_buffer(index);
         return true;
     }
@@ -197,6 +215,9 @@ static bool receive_one_frame(int sock, uint32_t *last_seq, bool *have_seq)
     *last_seq = header.seq;
     *have_seq = true;
     s_client.stats.frames_received++;
+    ESP_LOGI(TAG, "received seq=%lu flags=%u payload=%lu B",
+             (unsigned long)header.seq, header.flags,
+             (unsigned long)header.payload_length);
     publish_latest(index);
     return true;
 }

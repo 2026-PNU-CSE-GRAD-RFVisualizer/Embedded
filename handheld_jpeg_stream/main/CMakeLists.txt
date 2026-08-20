@@ -4,6 +4,7 @@ set(component_sources
         "jpeg_stream_client.c"
         "jpeg_stream_protocol.c"
         "lcd_gpio_writer.c"
+        "rgb332_zlib_sink.c"
 )
 
 if(CONFIG_HANDHELD_LOCAL_10FPS_TEST)
@@ -24,6 +25,7 @@ idf_component_register(
         esp_wifi
         nvs_flash
         esp_jpeg
+        esp_rom
 )
 
 if(CONFIG_HANDHELD_LOCAL_10FPS_TEST)
