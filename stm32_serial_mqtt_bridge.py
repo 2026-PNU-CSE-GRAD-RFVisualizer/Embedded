@@ -21,7 +21,7 @@ DEFAULT_BAUDRATE = 115200
 DEFAULT_GATEWAY_ID = "gw-01"
 DEFAULT_PUBLISH_MODE = "individual"
 DEFAULT_POSITIONS_FILE = Path(__file__).with_name("node_positions.json")
-DEFAULT_POSITION = {"pos_x": 0.0, "pos_y": 0.0, "pos_z": 0.0}
+SCHEMA_VERSION = 2
 PUBLISH_TIMEOUT_SEC = 5.0
 PUBLISH_RETRY_COUNT = 3
 RECONNECT_DELAY_SEC = 2.0
@@ -127,16 +127,16 @@ def load_node_positions(path):
 
 def attach_position(reading, positions):
     node_id = reading["node_id"]
-    position = positions.get(node_id, DEFAULT_POSITION)
+    position = positions.get(node_id)
     positioned = {
         "node_id": node_id,
         "timestamp": reading["timestamp"],
         "rssi": reading["rssi"],
         "seq": reading["seq"],
-        "pos_x": position["pos_x"],
-        "pos_y": position["pos_y"],
-        "pos_z": position["pos_z"],
     }
+
+    if position is not None:
+        positioned.update(position)
 
     if "ap_bssid" in reading:
         positioned["ap_bssid"] = reading["ap_bssid"]
@@ -144,12 +144,18 @@ def attach_position(reading, positions):
         positioned["rssi_raw"] = reading["rssi_raw"]
 
     positioned["status"] = reading["status"]
-    return positioned, node_id in positions
+    return positioned, position is not None
 
 
-def normalize_reading(item, batch_timestamp):
+def normalize_reading(item, batch_timestamp, require_node_timestamp=False):
     node_id = node_name(item["node_id"])
-    timestamp = int(item.get("timestamp", item.get("node_ts", batch_timestamp)))
+    timestamp_value = item.get("timestamp", item.get("node_ts"))
+    if timestamp_value is None:
+        if require_node_timestamp:
+            raise ValueError(f"{node_id} reading is missing timestamp")
+        timestamp_value = batch_timestamp
+
+    timestamp = int(timestamp_value)
     rssi = int(item["rssi"])
     if not -100 <= rssi <= -10:
         return None
@@ -159,7 +165,7 @@ def normalize_reading(item, batch_timestamp):
         "timestamp": timestamp,
         "rssi": rssi,
         "seq": int(item.get("seq", 0)),
-        "status": 0,
+        "status": int(item.get("status", item.get("error_flags", 0))),
     }
 
     if "rssi_raw" in item:
@@ -174,20 +180,30 @@ def normalize_reading(item, batch_timestamp):
 
 
 def normalize_gateway_payload(raw_payload, gateway_id):
-    timestamp = now_ms()
+    received_timestamp = now_ms()
 
     if "readings" in raw_payload:
+        schema_version = int(raw_payload.get("schema_version", SCHEMA_VERSION))
+        if schema_version != SCHEMA_VERSION:
+            raise ValueError(f"unsupported schema_version: {schema_version}")
+
+        timestamp = int(raw_payload.get("timestamp", received_timestamp))
         readings = raw_payload.get("readings") or []
         normalized_readings = []
         for item in readings:
             if "node_id" not in item or "rssi" not in item:
                 continue
 
-            reading = normalize_reading(item, timestamp)
+            reading = normalize_reading(
+                item,
+                timestamp,
+                require_node_timestamp=True,
+            )
             if reading is not None:
                 normalized_readings.append(reading)
 
         return {
+            "schema_version": SCHEMA_VERSION,
             "gateway_id": raw_payload.get("gateway_id", gateway_id),
             "timestamp": timestamp,
             "readings": normalized_readings,
@@ -196,6 +212,7 @@ def normalize_gateway_payload(raw_payload, gateway_id):
     # Compatibility with the older STM32 payload:
     # {"device_id":...,"nodes":[{"node_id":5,"rssi_filtered_x10":-598,...}]}
     if "nodes" in raw_payload:
+        timestamp = received_timestamp
         readings = []
         for item in raw_payload.get("nodes") or []:
             if "node_id" not in item:
@@ -226,6 +243,7 @@ def normalize_gateway_payload(raw_payload, gateway_id):
             readings.append(reading)
 
         return {
+            "schema_version": SCHEMA_VERSION,
             "gateway_id": gateway_id,
             "timestamp": timestamp,
             "readings": readings,
@@ -238,10 +256,18 @@ def main():
     args = parse_args()
     data_topic = args.topic or f"gateway/{args.gateway_id}"
     status_topic = f"status/{args.gateway_id}/lwt"
-    try:
-        positions = load_node_positions(args.positions_file)
-    except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
-        raise SystemExit(f"positions config error: {exc}") from exc
+    positions_path = Path(args.positions_file)
+    if positions_path.is_file():
+        try:
+            positions = load_node_positions(positions_path)
+        except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise SystemExit(f"positions config error: {exc}") from exc
+    else:
+        positions = {}
+        print(
+            f"warning: positions file not found: {positions_path}; "
+            "publishing without pos_x/pos_y/pos_z"
+        )
 
     warned_missing_positions = set()
     last_published_seq = {}
@@ -333,7 +359,10 @@ def main():
                     positioned_readings.append(positioned)
                     if not position_found and reading["node_id"] not in warned_missing_positions:
                         warned_missing_positions.add(reading["node_id"])
-                        print(f"warning: {reading['node_id']} position missing; using 0,0,0")
+                        print(
+                            f"warning: {reading['node_id']} position missing; "
+                            "publishing without pos_x/pos_y/pos_z"
+                        )
                 payload["readings"] = positioned_readings
 
                 if args.publish_mode in ("gateway", "both"):
