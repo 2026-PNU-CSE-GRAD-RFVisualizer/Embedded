@@ -80,7 +80,11 @@ esp_err_t espnow_receiver_init(QueueHandle_t *out_rx_queue, gateway_stats_t *sta
 
     ESP_RETURN_ON_ERROR(esp_netif_init(), TAG, "netif init failed");
     ESP_RETURN_ON_ERROR(esp_event_loop_create_default(), TAG, "event loop failed");
-    esp_netif_create_default_wifi_sta();
+    esp_netif_t *sta_netif = esp_netif_create_default_wifi_sta();
+    ESP_RETURN_ON_FALSE(sta_netif != NULL,
+                        ESP_ERR_NO_MEM,
+                        TAG,
+                        "create default Wi-Fi STA netif failed");
 
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
     ESP_RETURN_ON_ERROR(esp_wifi_init(&cfg), TAG, "wifi init");

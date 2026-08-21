@@ -5,6 +5,7 @@
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
+#include "freertos/semphr.h"
 #include "freertos/task.h"
 
 #include "espnow_packet.h"
@@ -35,6 +36,7 @@ typedef struct {
 static const char *TAG = "gateway";
 static QueueHandle_t s_rx_queue;
 static QueueHandle_t s_uart_queue;
+static SemaphoreHandle_t s_nodes_mutex;
 static gateway_stats_t s_stats;
 static node_state_t s_nodes[MAX_NODES];
 
@@ -70,8 +72,10 @@ static node_state_t *find_or_alloc_node(uint8_t node_id)
 
 static void update_node_state(const rssi_node_packet_t *packet)
 {
+    xSemaphoreTake(s_nodes_mutex, portMAX_DELAY);
     node_state_t *node = find_or_alloc_node(packet->node_id);
     if (node == NULL) {
+        xSemaphoreGive(s_nodes_mutex);
         ESP_LOGW(TAG, "node table full, dropping node=%u", packet->node_id);
         return;
     }
@@ -90,6 +94,7 @@ static void update_node_state(const rssi_node_packet_t *packet)
     node->last_filtered_x10 = packet->rssi_filtered_x10;
     node->last_error_flags = packet->error_flags;
     node->packet_count++;
+    xSemaphoreGive(s_nodes_mutex);
 }
 
 static void gateway_process_task(void *arg)
@@ -132,8 +137,20 @@ static void gateway_status_task(void *arg)
         }
 #endif
 
+        uint32_t now_ms = (uint32_t)(esp_timer_get_time() / 1000ULL);
+        xSemaphoreTake(s_nodes_mutex, portMAX_DELAY);
         for (size_t i = 0; i < MAX_NODES; ++i) {
             if (s_nodes[i].active) {
+                uint32_t age_ms = now_ms - s_nodes[i].last_rx_uptime_ms;
+                if (age_ms > GATEWAY_NODE_TIMEOUT_MS) {
+                    ESP_LOGW(TAG,
+                             "node=%u offline: no packet for %lu ms; removing cached state",
+                             s_nodes[i].node_id,
+                             (unsigned long)age_ms);
+                    memset(&s_nodes[i], 0, sizeof(s_nodes[i]));
+                    continue;
+                }
+
                 ESP_LOGI(TAG,
                          "node=%u seq=%lu raw=%d filt_x10=%d count=%lu dup=%lu lost=%lu err=0x%04X",
                          s_nodes[i].node_id,
@@ -146,6 +163,7 @@ static void gateway_status_task(void *arg)
                          s_nodes[i].last_error_flags);
             }
         }
+        xSemaphoreGive(s_nodes_mutex);
         vTaskDelay(pdMS_TO_TICKS(5000));
     }
 }
@@ -230,6 +248,9 @@ static void gateway_local_rssi_task(void *arg)
 
 void app_main(void)
 {
+    s_nodes_mutex = xSemaphoreCreateMutex();
+    ESP_ERROR_CHECK(s_nodes_mutex == NULL ? ESP_ERR_NO_MEM : ESP_OK);
+
     ESP_ERROR_CHECK(uart_forwarder_init(&s_uart_queue));
     ESP_ERROR_CHECK(espnow_receiver_init(&s_rx_queue, &s_stats));
     ESP_ERROR_CHECK(gateway_time_sync_start());

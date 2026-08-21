@@ -57,19 +57,25 @@
 
 #define HSI_CLOCK_HZ            8000000UL
 #define USART1_BAUDRATE         115200UL
+#define UART_RX_RING_SIZE       256U
 
 volatile uint32_t g_ms_ticks;
 volatile uint32_t g_uart_rx_count;
 volatile uint32_t g_parse_ok_count;
 volatile uint32_t g_checksum_error_count;
 volatile uint32_t g_format_error_count;
+volatile uint32_t g_uart_rx_overflow_count;
 volatile uint32_t g_last_parse_result;
 volatile rssi_measurement_t g_latest_measurement;
 volatile int g_latest_mqtt_payload_len;
 char g_mqtt_payload[MQTT_PAYLOAD_MAX_LEN];
 
 static rssi_preprocessor_t s_rssi_ctx;
-static volatile bool s_payload_dirty;
+static bool s_payload_dirty;
+static uint64_t s_snapshot_timestamp_ms;
+static volatile uint8_t s_uart_rx_ring[UART_RX_RING_SIZE];
+static volatile uint16_t s_uart_rx_head;
+static volatile uint16_t s_uart_rx_tail;
 
 void SystemInit(void)
 {
@@ -120,17 +126,44 @@ void USART1_IRQHandler(void)
 {
     if ((USART1_SR & USART_SR_RXNE) != 0UL) {
         uint8_t byte = (uint8_t)(USART1_DR & 0xFFU);
-        rssi_measurement_t measurement;
-        rssi_parse_result_t result;
+        uint16_t head = s_uart_rx_head;
+        uint16_t next = (uint16_t)((head + 1U) % UART_RX_RING_SIZE);
 
         g_uart_rx_count++;
-        result = rssi_parser_feed_byte(byte, &measurement);
+        if (next == s_uart_rx_tail) {
+            g_uart_rx_overflow_count++;
+        } else {
+            s_uart_rx_ring[head] = byte;
+            s_uart_rx_head = next;
+        }
+    }
+}
+
+static bool uart_rx_pop(uint8_t *out_byte)
+{
+    uint16_t tail = s_uart_rx_tail;
+    if (tail == s_uart_rx_head) {
+        return false;
+    }
+
+    *out_byte = s_uart_rx_ring[tail];
+    s_uart_rx_tail = (uint16_t)((tail + 1U) % UART_RX_RING_SIZE);
+    return true;
+}
+
+static void process_uart_rx(void)
+{
+    uint8_t byte;
+    while (uart_rx_pop(&byte)) {
+        rssi_measurement_t measurement;
+        rssi_parse_result_t result = rssi_parser_feed_byte(byte, &measurement);
         g_last_parse_result = (uint32_t)result;
 
         if (result == RSSI_PARSE_OK) {
             g_latest_measurement = measurement;
             g_parse_ok_count++;
             (void)rssi_preprocessor_update(&s_rssi_ctx, &measurement, millis());
+            s_snapshot_timestamp_ms = measurement.measurement_timestamp_ms;
             s_payload_dirty = true;
         } else if (result == RSSI_PARSE_CHECKSUM_ERROR) {
             g_checksum_error_count++;
@@ -160,6 +193,7 @@ int main(void)
     printf("STM32 RSSI receiver ready\r\n");
 
     for (;;) {
+        process_uart_rx();
         rssi_preprocessor_update_timeouts(&s_rssi_ctx, millis());
 
         if (s_payload_dirty) {
@@ -168,7 +202,8 @@ int main(void)
                                                                     sizeof(g_mqtt_payload),
                                                                     "gw-01",
                                                                     &s_rssi_ctx,
-                                                                    millis());
+                                                                    millis(),
+                                                                    s_snapshot_timestamp_ms);
             if (g_latest_mqtt_payload_len > 0) {
                 printf("%s\r\n", g_mqtt_payload);
             } else {

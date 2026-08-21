@@ -29,7 +29,11 @@ esp_err_t rssi_measure_init_wifi(void)
 
     ESP_RETURN_ON_ERROR(esp_netif_init(), TAG, "netif init failed");
     ESP_RETURN_ON_ERROR(esp_event_loop_create_default(), TAG, "event loop failed");
-    esp_netif_create_default_wifi_sta();
+    esp_netif_t *sta_netif = esp_netif_create_default_wifi_sta();
+    ESP_RETURN_ON_FALSE(sta_netif != NULL,
+                        ESP_ERR_NO_MEM,
+                        TAG,
+                        "create default Wi-Fi STA netif failed");
 
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
     ESP_RETURN_ON_ERROR(esp_wifi_init(&cfg), TAG, "wifi init failed");
@@ -43,6 +47,35 @@ esp_err_t rssi_measure_init_wifi(void)
 
 esp_err_t rssi_measure_scan_target(int8_t *out_rssi_dbm)
 {
+#if NODE_TIME_SYNC_ENABLE
+    /*
+     * The station is associated with the measurement AP for SNTP. Starting an
+     * active scan while association is in progress returns ESP_ERR_WIFI_STATE
+     * ("STA is connecting, scan are not allowed"). Once associated, the AP
+     * record already contains the RSSI we need, so no scan is necessary.
+     */
+    wifi_ap_record_t associated_ap = {0};
+    esp_err_t err = esp_wifi_sta_get_ap_info(&associated_ap);
+    if (err != ESP_OK) {
+        return err;
+    }
+
+#if TARGET_AP_USE_BSSID
+    if (memcmp(associated_ap.bssid, k_target_bssid, sizeof(k_target_bssid)) != 0) {
+        return ESP_ERR_NOT_FOUND;
+    }
+#else
+    if (strcmp((const char *)associated_ap.ssid, (const char *)k_target_ssid) != 0) {
+        return ESP_ERR_NOT_FOUND;
+    }
+#endif
+    if (associated_ap.primary != TARGET_AP_CHANNEL) {
+        return ESP_ERR_NOT_FOUND;
+    }
+
+    *out_rssi_dbm = associated_ap.rssi;
+    return ESP_OK;
+#else
     wifi_scan_config_t scan_config = {
         .ssid = NULL,
         .bssid = TARGET_AP_USE_BSSID ? (uint8_t *)k_target_bssid : NULL,
@@ -121,4 +154,5 @@ esp_err_t rssi_measure_scan_target(int8_t *out_rssi_dbm)
 
     (void)esp_wifi_set_channel(ESPNOW_WIFI_CHANNEL, WIFI_SECOND_CHAN_NONE);
     return ESP_ERR_NOT_FOUND;
+#endif
 }

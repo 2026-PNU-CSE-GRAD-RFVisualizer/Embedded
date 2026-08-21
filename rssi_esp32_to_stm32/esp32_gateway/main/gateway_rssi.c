@@ -68,6 +68,34 @@ esp_err_t gateway_rssi_measure_once(gateway_rssi_sample_t *out_sample)
     int8_t raw = s_latest_raw;
     uint8_t matched_channel = 0;
     uint8_t matched_bssid[6] = {0};
+    esp_err_t err = ESP_OK;
+
+#if GATEWAY_TIME_SYNC_ENABLE
+    /* The gateway is already associated with the target AP for SNTP. */
+    wifi_ap_record_t associated_ap = {0};
+    err = esp_wifi_sta_get_ap_info(&associated_ap);
+    if (err == ESP_OK) {
+        int found = 0;
+#if TARGET_AP_USE_BSSID
+        found = memcmp(associated_ap.bssid,
+                       k_target_bssid,
+                       sizeof(k_target_bssid)) == 0;
+#else
+        found = strcmp((const char *)associated_ap.ssid,
+                       (const char *)k_target_ssid) == 0;
+#endif
+        found = found && associated_ap.primary == TARGET_AP_CHANNEL;
+        if (found) {
+            raw = associated_ap.rssi;
+            matched_channel = associated_ap.primary;
+            memcpy(matched_bssid, associated_ap.bssid, sizeof(matched_bssid));
+        } else {
+            flags |= RSSI_ERR_AP_NOT_FOUND;
+        }
+    } else {
+        flags |= RSSI_ERR_SCAN_FAILED;
+    }
+#else
 
     wifi_scan_config_t scan_config = {
         .ssid = NULL,
@@ -79,7 +107,7 @@ esp_err_t gateway_rssi_measure_once(gateway_rssi_sample_t *out_sample)
         .scan_time.active.max = GATEWAY_SCAN_ACTIVE_MAX_MS,
     };
 
-    esp_err_t err = esp_wifi_scan_start(&scan_config, true);
+    err = esp_wifi_scan_start(&scan_config, true);
     if (err == ESP_OK) {
         uint16_t ap_count = 0;
         err = esp_wifi_scan_get_ap_num(&ap_count);
@@ -146,6 +174,7 @@ esp_err_t gateway_rssi_measure_once(gateway_rssi_sample_t *out_sample)
     }
 
     (void)esp_wifi_set_channel(ESPNOW_WIFI_CHANNEL, WIFI_SECOND_CHAN_NONE);
+#endif
 
     if ((flags & (RSSI_ERR_AP_NOT_FOUND | RSSI_ERR_SCAN_FAILED)) == 0u && is_valid_rssi(raw)) {
         filter_add(raw);

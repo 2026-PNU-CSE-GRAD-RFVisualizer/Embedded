@@ -27,6 +27,7 @@
 #define STM32_UART_RX_GPIO          18
 
 #define MAX_NODES                   8
+#define GATEWAY_NODE_TIMEOUT_MS     3000u
 #define ESPNOW_RX_QUEUE_LEN         32
 #define UART_LINE_QUEUE_LEN         32
 #define UART_LINE_MAX_LEN           128

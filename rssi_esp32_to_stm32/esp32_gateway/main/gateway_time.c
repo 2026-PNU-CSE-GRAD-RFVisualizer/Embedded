@@ -6,6 +6,7 @@
 #include "esp_check.h"
 #include "esp_event.h"
 #include "esp_log.h"
+#include "esp_netif.h"
 #include "esp_sntp.h"
 #include "esp_wifi.h"
 
@@ -14,6 +15,46 @@
 static const char *TAG = "gateway_time";
 
 #if GATEWAY_TIME_SYNC_ENABLE
+static void time_sync_notification_cb(struct timeval *tv)
+{
+    uint64_t timestamp_ms = (uint64_t)tv->tv_sec * 1000ULL +
+                            (uint64_t)tv->tv_usec / 1000ULL;
+    ESP_LOGI(TAG, "SNTP synchronized: timestamp_ms=%llu", timestamp_ms);
+}
+
+static void start_sntp_after_ip(void)
+{
+    if (esp_sntp_enabled()) {
+        return;
+    }
+
+    esp_sntp_setoperatingmode(SNTP_OPMODE_POLL);
+    esp_sntp_setservername(0, GATEWAY_TIME_SNTP_SERVER);
+    esp_sntp_set_time_sync_notification_cb(time_sync_notification_cb);
+    esp_sntp_init();
+    ESP_LOGI(TAG, "SNTP started after DHCP; server=%s", GATEWAY_TIME_SNTP_SERVER);
+}
+
+static void ip_event_handler(void *arg,
+                             esp_event_base_t event_base,
+                             int32_t event_id,
+                             void *event_data)
+{
+    (void)arg;
+    (void)event_base;
+
+    if (event_id == IP_EVENT_STA_GOT_IP) {
+        const ip_event_got_ip_t *got_ip = event_data;
+        if (got_ip != NULL) {
+            ESP_LOGI(TAG,
+                     "DHCP lease acquired: ip=" IPSTR " gateway=" IPSTR,
+                     IP2STR(&got_ip->ip_info.ip),
+                     IP2STR(&got_ip->ip_info.gw));
+            start_sntp_after_ip();
+        }
+    }
+}
+
 static void wifi_event_handler(void *arg,
                                esp_event_base_t event_base,
                                int32_t event_id,
@@ -21,10 +62,21 @@ static void wifi_event_handler(void *arg,
 {
     (void)arg;
     (void)event_base;
-    (void)event_data;
 
     if (event_id == WIFI_EVENT_STA_DISCONNECTED) {
-        (void)esp_wifi_connect();
+        const wifi_event_sta_disconnected_t *disconnected = event_data;
+        ESP_LOGW(TAG,
+                 "Wi-Fi disconnected (reason=%u); reconnecting",
+                 disconnected != NULL ? disconnected->reason : 0u);
+        esp_err_t err = esp_wifi_connect();
+        if (err != ESP_OK && err != ESP_ERR_WIFI_CONN) {
+            ESP_LOGE(TAG, "Wi-Fi reconnect failed: %s", esp_err_to_name(err));
+        }
+    } else if (event_id == WIFI_EVENT_STA_CONNECTED) {
+        const wifi_event_sta_connected_t *connected = event_data;
+        ESP_LOGI(TAG,
+                 "Wi-Fi associated: channel=%u",
+                 connected != NULL ? connected->channel : 0u);
     }
 }
 #endif
@@ -76,20 +128,23 @@ esp_err_t gateway_time_sync_start(void)
                                    NULL),
         TAG,
         "register Wi-Fi event handler failed");
+    ESP_RETURN_ON_ERROR(
+        esp_event_handler_register(IP_EVENT,
+                                   IP_EVENT_STA_GOT_IP,
+                                   ip_event_handler,
+                                   NULL),
+        TAG,
+        "register IP event handler failed");
     ESP_RETURN_ON_ERROR(esp_wifi_set_config(WIFI_IF_STA, &wifi_config),
                         TAG,
                         "set time-sync Wi-Fi config failed");
-
-    esp_sntp_setoperatingmode(SNTP_OPMODE_POLL);
-    esp_sntp_setservername(0, GATEWAY_TIME_SNTP_SERVER);
-    esp_sntp_init();
 
     esp_err_t err = esp_wifi_connect();
     if (err != ESP_OK && err != ESP_ERR_WIFI_CONN) {
         return err;
     }
 
-    ESP_LOGI(TAG, "SNTP started; timestamp remains 0 until synchronization completes");
+    ESP_LOGI(TAG, "Wi-Fi time sync requested; SNTP will start after DHCP");
     return ESP_OK;
 #endif
 }

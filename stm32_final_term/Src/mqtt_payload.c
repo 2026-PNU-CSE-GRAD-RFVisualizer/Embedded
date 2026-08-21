@@ -44,7 +44,8 @@ int mqtt_payload_build_snapshot(char *out,
                                 size_t out_len,
                                 const char *gateway_id,
                                 const rssi_preprocessor_t *ctx,
-                                uint32_t now_ms)
+                                uint32_t now_uptime_ms,
+                                uint64_t snapshot_timestamp_ms)
 {
     if (out == NULL || out_len == 0u || gateway_id == NULL || ctx == NULL) {
         return -1;
@@ -55,9 +56,9 @@ int mqtt_payload_build_snapshot(char *out,
     if (append_text(out,
                     out_len,
                     &offset,
-                    "{\"gateway_id\":\"%s\",\"timestamp\":%lu,\"readings\":[",
+                    "{\"schema_version\":2,\"gateway_id\":\"%s\",\"timestamp\":%llu,\"readings\":[",
                     gateway_id,
-                    (unsigned long)now_ms) != 0) {
+                    (unsigned long long)snapshot_timestamp_ms) != 0) {
         return -1;
     }
 
@@ -68,7 +69,7 @@ int mqtt_payload_build_snapshot(char *out,
             continue;
         }
 
-        uint32_t age_ms = now_ms - node->last_update_ms;
+        uint32_t age_ms = now_uptime_ms - node->last_update_ms;
         (void)age_ms;
         if (append_text(out,
                         out_len,
@@ -85,7 +86,8 @@ int mqtt_payload_build_snapshot(char *out,
         if (append_text(out,
                         out_len,
                         &offset,
-                        ",\"rssi\":%d,\"seq\":%lu,\"rssi_raw\":%d,\"status\":%u}",
+                        ",\"timestamp\":%llu,\"rssi\":%d,\"seq\":%lu,\"rssi_raw\":%d,\"status\":%u}",
+                        (unsigned long long)node->measurement_timestamp_ms,
                         filtered_rssi_dbm(node->last_filtered_x10),
                         (unsigned long)node->last_seq,
                         node->last_raw_rssi,

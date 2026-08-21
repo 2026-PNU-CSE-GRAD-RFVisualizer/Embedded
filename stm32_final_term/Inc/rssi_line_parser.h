@@ -10,6 +10,7 @@ typedef struct {
     uint8_t node_id;
     uint32_t seq;
     uint32_t uptime_ms;
+    uint64_t measurement_timestamp_ms;
     int8_t rssi_raw_dbm;
     int16_t rssi_filtered_x10;
     uint8_t sample_count;
