@@ -25,6 +25,43 @@ import stm32_serial_mqtt_bridge as bridge
 
 
 class NormalizeGatewayPayloadTests(unittest.TestCase):
+    def test_schema_v2_accepts_rssi_at_minus_110_dbm(self):
+        source = {
+            "schema_version": 2,
+            "gateway_id": "gw-01",
+            "timestamp": 1787232369207,
+            "readings": [
+                {
+                    "node_id": 1,
+                    "timestamp": 1787232369207,
+                    "rssi": -110,
+                    "seq": 7,
+                    "status": 0,
+                }
+            ],
+        }
+
+        normalized = bridge.normalize_gateway_payload(source, "gw-01")
+
+        self.assertEqual(normalized["readings"][0]["rssi"], -110)
+
+    def test_legacy_payload_accepts_rssi_at_minus_110_dbm(self):
+        source = {
+            "device_id": "stm32-gw-01",
+            "nodes": [
+                {
+                    "node_id": 1,
+                    "rssi_filtered_x10": -1100,
+                    "seq": 7,
+                    "error_flags": 0,
+                }
+            ],
+        }
+
+        normalized = bridge.normalize_gateway_payload(source, "gw-01")
+
+        self.assertEqual(normalized["readings"][0]["rssi"], -110)
+
     def test_schema_v2_preserves_node_and_snapshot_timestamps(self):
         source = {
             "schema_version": 2,
@@ -124,6 +161,19 @@ class PositionTests(unittest.TestCase):
         self.assertNotIn("pos_x", positioned)
         self.assertNotIn("pos_y", positioned)
         self.assertNotIn("pos_z", positioned)
+
+    def test_ap_channel_is_attached_without_changing_packet_schema(self):
+        reading = {
+            "node_id": "node-01",
+            "timestamp": 1787232369207,
+            "rssi": -105,
+            "seq": 18,
+            "status": 0,
+        }
+
+        positioned, _ = bridge.attach_position(reading, {}, ap_channel=6)
+
+        self.assertEqual(positioned["ap_channel"], 6)
 
 
 if __name__ == "__main__":

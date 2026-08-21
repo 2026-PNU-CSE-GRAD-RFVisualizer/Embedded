@@ -20,8 +20,11 @@ DEFAULT_SERIAL_PORT = "COM4"
 DEFAULT_BAUDRATE = 115200
 DEFAULT_GATEWAY_ID = "gw-01"
 DEFAULT_PUBLISH_MODE = "individual"
+DEFAULT_AP_CHANNEL = 6
 DEFAULT_POSITIONS_FILE = Path(__file__).with_name("node_positions.json")
 SCHEMA_VERSION = 2
+RSSI_VALID_MIN_DBM = -110
+RSSI_VALID_MAX_DBM = -10
 PUBLISH_TIMEOUT_SEC = 5.0
 PUBLISH_RETRY_COUNT = 3
 RECONNECT_DELAY_SEC = 2.0
@@ -37,6 +40,12 @@ def parse_args():
     parser.add_argument("--serial-port", default=DEFAULT_SERIAL_PORT)
     parser.add_argument("--baudrate", type=int, default=DEFAULT_BAUDRATE)
     parser.add_argument("--gateway-id", default=DEFAULT_GATEWAY_ID)
+    parser.add_argument(
+        "--ap-channel",
+        type=int,
+        choices=range(1, 15),
+        default=DEFAULT_AP_CHANNEL,
+    )
     parser.add_argument("--client-id", default="stm32-serial-gw-01")
     parser.add_argument("--topic", default=None)
     parser.add_argument("--positions-file", default=str(DEFAULT_POSITIONS_FILE))
@@ -125,7 +134,7 @@ def load_node_positions(path):
     return positions
 
 
-def attach_position(reading, positions):
+def attach_position(reading, positions, ap_channel=DEFAULT_AP_CHANNEL):
     node_id = reading["node_id"]
     position = positions.get(node_id)
     positioned = {
@@ -133,6 +142,7 @@ def attach_position(reading, positions):
         "timestamp": reading["timestamp"],
         "rssi": reading["rssi"],
         "seq": reading["seq"],
+        "ap_channel": ap_channel,
     }
 
     if position is not None:
@@ -157,7 +167,7 @@ def normalize_reading(item, batch_timestamp, require_node_timestamp=False):
 
     timestamp = int(timestamp_value)
     rssi = int(item["rssi"])
-    if not -100 <= rssi <= -10:
+    if not RSSI_VALID_MIN_DBM <= rssi <= RSSI_VALID_MAX_DBM:
         return None
 
     reading = {
@@ -225,7 +235,7 @@ def normalize_gateway_payload(raw_payload, gateway_id):
             else:
                 continue
 
-            if not -100 <= rssi <= -10:
+            if not RSSI_VALID_MIN_DBM <= rssi <= RSSI_VALID_MAX_DBM:
                 continue
 
             reading = {
@@ -355,7 +365,9 @@ def main():
 
                 positioned_readings = []
                 for reading in payload["readings"]:
-                    positioned, position_found = attach_position(reading, positions)
+                    positioned, position_found = attach_position(
+                        reading, positions, args.ap_channel
+                    )
                     positioned_readings.append(positioned)
                     if not position_found and reading["node_id"] not in warned_missing_positions:
                         warned_missing_positions.add(reading["node_id"])

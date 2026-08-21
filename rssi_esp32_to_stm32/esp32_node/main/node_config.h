@@ -36,7 +36,7 @@
 #define ESPNOW_SEND_TIMEOUT_MS          300
 #define ESPNOW_TX_SLOT_MS               120
 
-#define RSSI_VALID_MIN_DBM              (-100)
+#define RSSI_VALID_MIN_DBM              (-110)
 #define RSSI_VALID_MAX_DBM              (-10)
 #define RSSI_SCAN_DEBUG_LOG             1
 

@@ -39,7 +39,7 @@ Server / Backend / Dashboard
 | `rssi_esp32_to_stm32/docs/` | 통신 프로토콜, 배선 및 시험 계획 |
 | `stm32_final_term/` | STM32F107VCT6 실기기 펌웨어 프로젝트 |
 | `stm32_serial_mqtt_bridge.py` | STM32 Serial JSON → MQTT 브리지 |
-| `node_positions.json` | 노드별 설치 좌표 설정 |
+| `node_positions.json` | 고정 노드별 설치 좌표 설정 (`node-02` 이동 좌표는 Backend 등록 좌표 사용) |
 | `임베디드_파트_중간보고서_2026-07-14.md` | 현재 진척도와 중간 결과 |
 
 ## 현재 상태
@@ -67,7 +67,10 @@ rssi_esp32_to_stm32/esp32_gateway/main/gateway_config.h
 MQTT 브리지 실행 예시:
 
 ```powershell
-python stm32_serial_mqtt_bridge.py --serial-port COM4 --server <MQTT_SERVER_IP>
+python stm32_serial_mqtt_bridge.py --serial-port COM4 --server <MQTT_SERVER_IP> --ap-channel 6
 ```
+
+`--ap-channel`은 MQTT payload의 `ap_channel`에 기록되며 기본값은 `6`입니다.
+현장 AP 채널이 바뀌면 ESP32 설정과 이 옵션을 같은 값으로 함께 변경해야 합니다.
 
 세부 구현 계획과 시험 결과는 저장소의 Markdown 문서를 참고합니다.
