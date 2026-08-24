@@ -17,6 +17,32 @@ config HANDHELD_LOCAL_10FPS_TEST
         forever. Wi-Fi and server streaming are skipped while this is enabled.
         Disable it to use the network JPEG stream client.
 
+choice HANDHELD_LOCAL_BNO_DISPLAY_MODE
+    prompt "Combined BNO085 test display mode"
+    depends on HANDHELD_LOCAL_BNO085_LCD_TEST
+    default HANDHELD_LOCAL_3D_TEST
+
+    config HANDHELD_LOCAL_3D_TEST
+        bool "Synthetic 3D room driven by full quaternion"
+        help
+            Render a perspective floor grid and colored wireframe cubes on the
+            LCD. The full relative quaternion drives yaw, pitch, and roll, so
+            this mode can validate local 3D camera response without a server.
+
+    config HANDHELD_LOCAL_VIEWPORT_TEST
+        bool "Synthetic yaw + pitch viewport"
+        help
+            Build a synthetic panorama in PSRAM and move an 800x480 viewport
+            from the latest BNO085 yaw and pitch. This is an offline camera
+            response test and does not require Wi-Fi or Graphics.
+
+    config HANDHELD_LOCAL_FRAME_SELECT_TEST
+        bool "Legacy yaw-selected JPEG frames"
+        help
+            Keep the earlier diagnostic behavior where yaw selects one of ten
+            embedded animation frames. These frames are not camera viewpoints.
+endchoice
+
 config HANDHELD_LCD_PIXEL_CLOCK_MHZ
     int "LCD I80 pixel clock (MHz)"
     range 8 20

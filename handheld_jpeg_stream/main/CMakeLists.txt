@@ -21,7 +21,11 @@ set(main_component_requirements
 )
 
 if(CONFIG_HANDHELD_LOCAL_10FPS_TEST)
-    list(APPEND component_sources "local_animation_test.c")
+    if(CONFIG_HANDHELD_LOCAL_3D_TEST)
+        list(APPEND component_sources "local_3d_test.c")
+    else()
+        list(APPEND component_sources "local_animation_test.c")
+    endif()
 endif()
 
 if(CONFIG_HANDHELD_LOCAL_BNO085_LCD_TEST)
@@ -39,7 +43,7 @@ idf_component_register(
         bno085_espidf
 )
 
-if(CONFIG_HANDHELD_LOCAL_10FPS_TEST)
+if(CONFIG_HANDHELD_LOCAL_10FPS_TEST AND NOT CONFIG_HANDHELD_LOCAL_3D_TEST)
     set(animation_frames 00 01 02 03 04 05 06 07 08 09)
     foreach(frame_number IN LISTS animation_frames)
         target_add_binary_data(

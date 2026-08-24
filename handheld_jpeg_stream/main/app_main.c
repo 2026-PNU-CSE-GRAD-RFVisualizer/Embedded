@@ -19,7 +19,11 @@
 #include "bno085_local_test.h"
 #endif
 #if CONFIG_HANDHELD_LOCAL_10FPS_TEST
+#if CONFIG_HANDHELD_LOCAL_3D_TEST
+#include "local_3d_test.h"
+#else
 #include "local_animation_test.h"
+#endif
 #endif
 
 #define WIFI_CONNECTED_BIT BIT0
@@ -136,7 +140,11 @@ void app_main(void)
 
 #if CONFIG_HANDHELD_LOCAL_10FPS_TEST
     ESP_LOGI(TAG, "local 10 FPS animation test enabled; Wi-Fi is skipped");
+#if CONFIG_HANDHELD_LOCAL_3D_TEST
+    local_3d_test_run();
+#else
     local_animation_test_run();
+#endif
 #endif
 
     if (CONFIG_HANDHELD_WIFI_SSID[0] == '\0' ||
