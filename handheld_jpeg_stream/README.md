@@ -1,7 +1,7 @@
 # ESP32-S3 Handheld JPEG Stream Client
 
 `Network-Backend-Article/image_relay`의 viewer 포트에서 JPEG 프레임을 받는
-독립 ESP-IDF 예제다. 대상 보드는 `ESP32-S3-DEVKITC-1-N8R8`이다.
+독립 ESP-IDF 예제다. 현재 대상 보드는 `ESP32-S3-DEVKITC-1-N16R8`이다.
 
 현재 구현 범위는 **TCP 수신 → 프레임 검증 → JPEG 디코딩 → NT35510 출력**
 까지다. GPIO 방식 LCD 드라이버와 보드 설정은 이 프로젝트 내부에 독립적으로
@@ -41,7 +41,7 @@ JPEG 스트림은 서로 다른 경로다. ESP32-S3는 이미지 중계 서버�
 payload     byte[length]
 ```
 
-서버 규격 상한은 8 MiB지만 N8R8 보드에서 그대로 할당하면 위험하다. 이
+서버 규격 상한은 8 MiB지만 N16R8 보드의 PSRAM도 8 MiB이므로 그대로 할당하면 위험하다. 이
 예제는 기본 512 KiB PSRAM 버퍼 2개를 사용하며 더 큰 프레임은 연결을 끊고
 재접속한다. Graphics 쪽은 800x480 JPEG, quality 60~75를 우선 사용하고 실제
 최대 크기를 계측한 뒤 `JPEG_STREAM_MAX_FRAME_BYTES`를 조정한다.
@@ -78,7 +78,7 @@ idf.py build
 idf.py -p COMx flash monitor
 ```
 
-`sdkconfig.defaults`에는 N8R8의 8 MiB Flash/8 MiB PSRAM 설정만 들어 있다.
+`sdkconfig.defaults`에는 N16R8의 16 MiB Flash/8 MiB PSRAM 설정이 들어 있다.
 
 ## 구현상 안전장치
 
@@ -130,3 +130,20 @@ gcc -std=c11 -Wall -Wextra -Werror `
 
 현재 환경에서는 ESP-IDF가 PATH에 없으면 firmware build를 실행할 수 없다.
 Host test는 header byte order와 magic/version/length 거부를 검증한다.
+
+Handheld Control RFHC v1 Serializer와 Backend 공유 벡터는 다음 명령으로
+검증한다.
+
+```powershell
+gcc -std=c11 -Wall -Wextra -Werror `
+  -I main main/handheld_control_protocol.c `
+  test/test_handheld_control_protocol_host.c `
+  -o test_handheld_control_protocol_host.exe
+./test_handheld_control_protocol_host.exe
+```
+
+정상 결과:
+
+```text
+6/6 RFHC serializer tests passed; backend vector matched
+```

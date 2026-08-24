@@ -11,6 +11,7 @@ mqtt_client = types.ModuleType("paho.mqtt.client")
 mqtt_client.MQTT_ERR_SUCCESS = 0
 paho = types.ModuleType("paho")
 paho_mqtt = types.ModuleType("paho.mqtt")
+paho_mqtt.MQTTException = OSError
 paho_mqtt.client = mqtt_client
 paho.mqtt = paho_mqtt
 serial = types.ModuleType("serial")

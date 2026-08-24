@@ -1,5 +1,6 @@
 set(component_sources
         "app_main.c"
+        "handheld_control_protocol.c"
         "jpeg_lcd_sink.c"
         "jpeg_stream_client.c"
         "jpeg_stream_protocol.c"

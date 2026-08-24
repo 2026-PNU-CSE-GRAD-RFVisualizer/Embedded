@@ -5,6 +5,7 @@ import time
 import traceback
 from pathlib import Path
 
+from paho.mqtt import MQTTException
 import paho.mqtt.client as mqtt
 
 try:
@@ -425,7 +426,7 @@ if __name__ == "__main__":
         except KeyboardInterrupt:
             print("stopping...")
             sys.exit(0)
-        except (serial.SerialException, mqtt.MQTTException, OSError) as exc:
+        except (serial.SerialException, MQTTException, OSError) as exc:
             print(f"bridge transport error: {exc}")
             traceback.print_exc()
             print(f"retrying bridge in {RECONNECT_DELAY_SEC:.0f}s...")
