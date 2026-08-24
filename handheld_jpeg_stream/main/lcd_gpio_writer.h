@@ -9,9 +9,15 @@
 extern "C" {
 #endif
 
+typedef esp_err_t (*lcd_gpio_writer_gate_begin_t)(void);
+typedef void (*lcd_gpio_writer_gate_end_t)(void);
+
 /* Initializes the panel with the verified GPIO sequence, then switches frame
  * transfers to the ESP32-S3 16-bit I80 DMA peripheral. */
 esp_err_t lcd_gpio_writer_init(void);
+void lcd_gpio_writer_set_transfer_gate(
+    lcd_gpio_writer_gate_begin_t begin,
+    lcd_gpio_writer_gate_end_t end);
 void lcd_gpio_writer_fill(uint16_t color);
 void lcd_gpio_writer_fill_rect(uint16_t x, uint16_t y, uint16_t width,
                                uint16_t height, uint16_t color);

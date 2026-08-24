@@ -15,6 +15,9 @@
 #include "jpeg_stream_client.h"
 #include "jpeg_stream_protocol.h"
 #include "rgb332_zlib_sink.h"
+#if CONFIG_HANDHELD_LOCAL_BNO085_LCD_TEST
+#include "bno085_local_test.h"
+#endif
 #if CONFIG_HANDHELD_LOCAL_10FPS_TEST
 #include "local_animation_test.h"
 #endif
@@ -123,6 +126,13 @@ void app_main(void)
 
     ESP_ERROR_CHECK(jpeg_lcd_sink_init());
     // show_boot_color_test();  // Disabled while testing server RGB332 frames.
+
+#if CONFIG_HANDHELD_LOCAL_BNO085_LCD_TEST
+    ESP_ERROR_CHECK(bno085_local_test_start());
+    lcd_gpio_writer_set_transfer_gate(bno085_local_test_lcd_begin,
+                                      bno085_local_test_lcd_end);
+    ESP_LOGI(TAG, "combined local BNO085 + LCD test started");
+#endif
 
 #if CONFIG_HANDHELD_LOCAL_10FPS_TEST
     ESP_LOGI(TAG, "local 10 FPS animation test enabled; Wi-Fi is skipped");

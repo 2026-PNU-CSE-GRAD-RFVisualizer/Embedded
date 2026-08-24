@@ -32,11 +32,13 @@ typedef struct {
 
 static bno085_hal_context_t s_hal;
 
+#if !CONFIG_BNO085_INT_POLLING
 static void IRAM_ATTR bno085_int_isr(void *arg)
 {
     bno085_hal_context_t *ctx = (bno085_hal_context_t *)arg;
     ctx->data_ready = true;
 }
+#endif
 
 static void record_i2c_error(esp_err_t err)
 {
@@ -68,16 +70,30 @@ static esp_err_t configure_gpio_once(void)
         .mode = GPIO_MODE_INPUT,
         .pull_up_en = GPIO_PULLUP_ENABLE,
         .pull_down_en = GPIO_PULLDOWN_DISABLE,
+#if CONFIG_BNO085_INT_POLLING
+        .intr_type = GPIO_INTR_DISABLE,
+#else
         .intr_type = GPIO_INTR_NEGEDGE,
+#endif
     };
     ESP_RETURN_ON_ERROR(gpio_config(&int_config), TAG, "INT GPIO configuration failed");
 
+#if !CONFIG_BNO085_INT_POLLING
     esp_err_t err = gpio_install_isr_service(0);
     if ((err != ESP_OK) && (err != ESP_ERR_INVALID_STATE)) {
         return err;
     }
     ESP_RETURN_ON_ERROR(gpio_isr_handler_add(BNO085_INT_GPIO, bno085_int_isr, &s_hal),
                         TAG, "INT handler installation failed");
+#endif
+
+    ESP_LOGI(TAG, "INT mode: %s",
+#if CONFIG_BNO085_INT_POLLING
+             "1 ms task polling"
+#else
+             "GPIO falling-edge ISR"
+#endif
+    );
 
     s_hal.gpio_ready = true;
     return ESP_OK;

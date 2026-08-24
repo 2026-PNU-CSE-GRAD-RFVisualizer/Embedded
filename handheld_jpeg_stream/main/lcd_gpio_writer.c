@@ -47,7 +47,20 @@ static rgb332_lookup_t rgb332_lookup[256];
 #define LCD_FRAME_PIXELS ((size_t)LCD_H_RES * LCD_V_RES)
 #define LCD_FRAME_WORDS  (LCD_FRAME_PIXELS * 3 / 2)
 #define LCD_FRAME_BYTES  (LCD_FRAME_WORDS * sizeof(uint16_t))
+#define LCD_STRIPE_ROWS   96U
+#define LCD_STRIPE_PIXELS ((size_t)LCD_H_RES * LCD_STRIPE_ROWS)
+#define LCD_STRIPE_BYTES  (LCD_STRIPE_PIXELS * 3U)
+#define LCD_STRIPE_COUNT  (LCD_V_RES / LCD_STRIPE_ROWS)
 #define LCD_GDMA_DESCRIPTOR_BYTES 4095U
+#define LCD_DMA_TIMEOUT_MS 200U
+
+_Static_assert((LCD_V_RES % LCD_STRIPE_ROWS) == 0,
+               "LCD stripe rows must divide the frame height");
+_Static_assert((LCD_STRIPE_PIXELS % 2U) == 0,
+               "RGB666 packing requires an even pixel count per stripe");
+
+static lcd_gpio_writer_gate_begin_t transfer_gate_begin;
+static lcd_gpio_writer_gate_end_t transfer_gate_end;
 
 /*
  * This panel revision keeps consuming three 8-bit colour components even
@@ -451,6 +464,27 @@ static esp_err_t start_i80_dma(void)
         esp_lcd_new_panel_io_i80(i80_bus, &io_config, &panel_io), TAG,
         "failed to create I80 panel IO");
 
+    /*
+     * Five-milliamp drive is marginal for the long 16-bit Dupont harness.
+     * Use the next drive step for DMA while avoiding the sharpest 20/40 mA
+     * edges, which can ring badly on an unterminated parallel bus.
+     */
+    for (size_t i = 0; i < sizeof(data_pins) / sizeof(data_pins[0]); ++i) {
+        ESP_RETURN_ON_ERROR(
+            gpio_set_drive_capability(data_pins[i], GPIO_DRIVE_CAP_1),
+            TAG, "DMA data GPIO drive-strength config failed");
+    }
+    ESP_RETURN_ON_ERROR(
+        gpio_set_drive_capability(LCD_PIN_WR, GPIO_DRIVE_CAP_1), TAG,
+        "DMA WR drive-strength config failed");
+    ESP_RETURN_ON_ERROR(
+        gpio_set_drive_capability(LCD_PIN_DC, GPIO_DRIVE_CAP_1), TAG,
+        "DMA DC drive-strength config failed");
+    ESP_RETURN_ON_ERROR(
+        gpio_set_drive_capability(LCD_PIN_CS, GPIO_DRIVE_CAP_1), TAG,
+        "DMA CS drive-strength config failed");
+    ESP_LOGI(TAG, "I80 DMA GPIO drive strength: 10 mA");
+
     dma_frame = esp_lcd_i80_alloc_draw_buffer(
         panel_io, LCD_FRAME_BYTES,
         MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
@@ -460,7 +494,7 @@ static esp_err_t start_i80_dma(void)
 
     ESP_LOGI(TAG,
              "I80 DMA ready: %u Hz, one %u-byte full frame, "
-             "%u-byte descriptor budget, full-window reset + single RAMWR",
+             "%u-byte descriptor budget, per-stripe window + RAMWR",
              LCD_PIXEL_CLOCK_HZ, (unsigned)LCD_FRAME_BYTES,
              (unsigned)(LCD_FRAME_BYTES * 2 +
                         LCD_GDMA_DESCRIPTOR_BYTES));
@@ -498,9 +532,56 @@ static esp_err_t dma_set_window(uint16_t x_start, uint16_t y_start,
     return dma_write_reg(NT35510_PASET + 3, y_end & 0xFF);
 }
 
-static esp_err_t dma_begin_full_frame(void)
+static esp_err_t enter_transfer_gate(void)
 {
-    return dma_set_window(0, 0, LCD_H_RES - 1, LCD_V_RES - 1);
+    return transfer_gate_begin != NULL ? transfer_gate_begin() : ESP_OK;
+}
+
+static void leave_transfer_gate(void)
+{
+    if (transfer_gate_end != NULL) {
+        transfer_gate_end();
+    }
+}
+
+static esp_err_t dma_send_packed_frame_striped(void)
+{
+    const uint8_t *frame_bytes = (const uint8_t *)dma_frame;
+    for (size_t stripe = 0; stripe < LCD_STRIPE_COUNT; ++stripe) {
+        ESP_RETURN_ON_ERROR(enter_transfer_gate(), TAG,
+                            "LCD stripe gate acquisition failed");
+
+        /*
+         * Each DMA transaction toggles CS.  Do not depend on the controller
+         * preserving a previous RAMWR stream (including its RGB666 component
+         * phase) across that gap and the intervening BNO I2C transaction.
+         * Give every stripe its own exact GRAM window and fresh RAMWR.
+         */
+        const uint16_t y_start = (uint16_t)(stripe * LCD_STRIPE_ROWS);
+        const uint16_t y_end = (uint16_t)(y_start + LCD_STRIPE_ROWS - 1U);
+        esp_err_t result = dma_set_window(0, y_start, LCD_H_RES - 1, y_end);
+        if (result == ESP_OK) {
+            result = esp_lcd_panel_io_tx_color(
+                panel_io, NT35510_RAMWR,
+                frame_bytes + stripe * LCD_STRIPE_BYTES,
+                LCD_STRIPE_BYTES);
+        }
+        if (result == ESP_OK &&
+            xSemaphoreTake(dma_done,
+                           pdMS_TO_TICKS(LCD_DMA_TIMEOUT_MS)) != pdTRUE) {
+            result = ESP_ERR_TIMEOUT;
+        }
+        leave_transfer_gate();
+        ESP_RETURN_ON_ERROR(result, TAG,
+                            "LCD stripe %u/%u transfer failed",
+                            (unsigned)(stripe + 1U),
+                            (unsigned)LCD_STRIPE_COUNT);
+
+        /* The BNO task has higher priority and can consume one pending sample
+         * as soon as the gate is released, before the next stripe begins. */
+        taskYIELD();
+    }
+    return ESP_OK;
 }
 
 esp_err_t lcd_gpio_writer_init(void)
@@ -608,13 +689,18 @@ static esp_err_t dma_send_pixels(const uint16_t *pixels, uint16_t solid_color,
         pack_rgb666_pair(first, second, &dma_frame[(i / 2) * 3]);
     }
 
-    ESP_RETURN_ON_ERROR(
-        esp_lcd_panel_io_tx_color(panel_io, NT35510_RAMWR,
-                                  dma_frame, LCD_FRAME_BYTES),
-        TAG, "full-frame DMA submission failed");
-    ESP_RETURN_ON_FALSE(xSemaphoreTake(dma_done, portMAX_DELAY) == pdTRUE,
-                        ESP_FAIL, TAG, "full-frame DMA completion failed");
-    return ESP_OK;
+    return dma_send_packed_frame_striped();
+}
+
+void lcd_gpio_writer_set_transfer_gate(
+    lcd_gpio_writer_gate_begin_t begin,
+    lcd_gpio_writer_gate_end_t end)
+{
+    transfer_gate_begin = begin;
+    transfer_gate_end = end;
+    ESP_LOGI(TAG, "transfer gate %s; %u rows x %u DMA stripes",
+             begin != NULL && end != NULL ? "enabled" : "disabled",
+             (unsigned)LCD_STRIPE_ROWS, (unsigned)LCD_STRIPE_COUNT);
 }
 
 void lcd_gpio_writer_fill(uint16_t color)
@@ -623,11 +709,8 @@ void lcd_gpio_writer_fill(uint16_t color)
         return;
     }
 
-    esp_err_t result = dma_begin_full_frame();
-    if (result == ESP_OK) {
-        result = dma_send_pixels(NULL, color, true,
-                                 (size_t)LCD_H_RES * LCD_V_RES);
-    }
+    const esp_err_t result = dma_send_pixels(
+        NULL, color, true, (size_t)LCD_H_RES * LCD_V_RES);
     if (result != ESP_OK) {
         ESP_LOGE(TAG, "DMA fill failed: %s", esp_err_to_name(result));
     }
@@ -662,8 +745,6 @@ esp_err_t lcd_gpio_writer_draw(const uint16_t *pixels, size_t pixel_count)
                         ESP_ERR_INVALID_SIZE, TAG,
                         "expected one complete 800x480 landscape frame");
 
-    ESP_RETURN_ON_ERROR(dma_begin_full_frame(), TAG,
-                        "failed to begin DMA frame");
     return dma_send_pixels(pixels, 0, false, pixel_count);
 }
 
@@ -676,9 +757,6 @@ esp_err_t lcd_gpio_writer_draw_rgb332(const uint8_t *pixels,
                         ESP_ERR_INVALID_SIZE, TAG,
                         "expected one complete 800x480 RGB332 frame");
 
-    ESP_RETURN_ON_ERROR(dma_begin_full_frame(), TAG,
-                        "RGB332 full-frame window reset failed");
-
     for (size_t i = 0; i < pixel_count; i += 2) {
         const rgb332_lookup_t *first = &rgb332_lookup[pixels[i]];
         const rgb332_lookup_t *second = &rgb332_lookup[pixels[i + 1]];
@@ -689,12 +767,5 @@ esp_err_t lcd_gpio_writer_draw_rgb332(const uint8_t *pixels,
         output[2] = second->green_blue;
     }
 
-    ESP_RETURN_ON_ERROR(
-        esp_lcd_panel_io_tx_color(panel_io, NT35510_RAMWR,
-                                  dma_frame, LCD_FRAME_BYTES),
-        TAG, "RGB332 full-frame DMA submission failed");
-    ESP_RETURN_ON_FALSE(xSemaphoreTake(dma_done, portMAX_DELAY) == pdTRUE,
-                        ESP_FAIL, TAG,
-                        "RGB332 full-frame DMA completion failed");
-    return ESP_OK;
+    return dma_send_packed_frame_striped();
 }

@@ -1,5 +1,14 @@
 menu "RFVisualizer handheld JPEG stream"
 
+config HANDHELD_LOCAL_BNO085_LCD_TEST
+    bool "Run combined BNO085 + local LCD test"
+    default n
+    select HANDHELD_LOCAL_10FPS_TEST
+    help
+        Start the BNO085 at 50 Hz in a dedicated task while the embedded
+        800x480 LCD animation runs at 10 FPS. Wi-Fi and server streaming are
+        skipped because this option selects the local animation test.
+
 config HANDHELD_LOCAL_10FPS_TEST
     bool "Run embedded 10-frame / 10 FPS LCD animation test"
     default n
@@ -66,5 +75,51 @@ config JPEG_STREAM_SINK_TASK_STACK
     help
         The RGB332 zlib path calls the ROM miniz inflater, whose decompressor
         state requires substantially more stack than the JPEG-only path.
+
+config BNO085_I2C_ADDRESS
+    hex "BNO085 7-bit I2C address"
+    range 0x4A 0x4B
+    default 0x4B
+
+config BNO085_I2C_SPEED_HZ
+    int "BNO085 I2C clock speed (Hz)"
+    range 100000 400000
+    default 100000
+
+config BNO085_REPORT_INTERVAL_US
+    int "BNO085 report interval (microseconds)"
+    range 5000 1000000
+    default 20000
+
+config BNO085_LCD_REPORT_INTERVAL_US
+    int "BNO085 report interval during combined LCD test (microseconds)"
+    range 20000 1000000
+    default 20000
+    depends on HANDHELD_LOCAL_BNO085_LCD_TEST
+    help
+        LCD I80 frames are split into DMA stripes so BNO085 I2C can run between
+        stripes without overlapping the parallel bus. 20000 microseconds keeps
+        the production target of 50 Hz. The standalone interval is independent.
+
+config BNO085_INT_POLLING
+    bool "Poll BNO085 INT from ImuTask instead of using a GPIO ISR"
+    default y if HANDHELD_LOCAL_BNO085_LCD_TEST
+    default n
+    help
+        Keep INT physically connected to GPIO41 but disable its GPIO interrupt.
+        The combined local test already calls bno085_service every millisecond,
+        and the HAL reads the active-low INT level before each I2C transfer.
+        This removes the redundant GPIO ISR while the LCD I80 DMA is active.
+
+choice BNO085_REPORT_TYPE
+    prompt "BNO085 quaternion report"
+    default BNO085_REPORT_GAME_ROTATION_VECTOR
+
+    config BNO085_REPORT_GAME_ROTATION_VECTOR
+        bool "Game Rotation Vector (gyro + accelerometer)"
+
+    config BNO085_REPORT_ROTATION_VECTOR
+        bool "Rotation Vector (gyro + accelerometer + magnetometer)"
+endchoice
 
 endmenu

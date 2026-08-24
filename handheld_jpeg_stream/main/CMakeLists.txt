@@ -8,16 +8,7 @@ set(component_sources
         "rgb332_zlib_sink.c"
 )
 
-if(CONFIG_HANDHELD_LOCAL_10FPS_TEST)
-    list(APPEND component_sources "local_animation_test.c")
-endif()
-
-idf_component_register(
-    SRCS
-        ${component_sources}
-    INCLUDE_DIRS
-        "."
-    REQUIRES
+set(main_component_requirements
         esp_event
         esp_driver_gpio
         esp_lcd
@@ -27,6 +18,25 @@ idf_component_register(
         nvs_flash
         esp_jpeg
         esp_rom
+)
+
+if(CONFIG_HANDHELD_LOCAL_10FPS_TEST)
+    list(APPEND component_sources "local_animation_test.c")
+endif()
+
+if(CONFIG_HANDHELD_LOCAL_BNO085_LCD_TEST)
+    list(APPEND component_sources "bno085_local_test.c")
+endif()
+
+idf_component_register(
+    SRCS
+        ${component_sources}
+    INCLUDE_DIRS
+        "."
+    REQUIRES
+        ${main_component_requirements}
+    PRIV_REQUIRES
+        bno085_espidf
 )
 
 if(CONFIG_HANDHELD_LOCAL_10FPS_TEST)
