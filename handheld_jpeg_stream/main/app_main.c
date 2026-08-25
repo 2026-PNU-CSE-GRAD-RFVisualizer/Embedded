@@ -1,3 +1,4 @@
+#include <stdbool.h>
 #include <string.h>
 
 #include "esp_event.h"
@@ -15,7 +16,8 @@
 #include "jpeg_stream_client.h"
 #include "jpeg_stream_protocol.h"
 #include "rgb332_zlib_sink.h"
-#if CONFIG_HANDHELD_LOCAL_BNO085_LCD_TEST
+#include "handheld_control_udp.h"
+#if CONFIG_HANDHELD_LOCAL_BNO085_LCD_TEST || CONFIG_HANDHELD_CONTROL_UDP
 #include "bno085_local_test.h"
 #endif
 #if CONFIG_HANDHELD_LOCAL_10FPS_TEST
@@ -128,14 +130,27 @@ void app_main(void)
     }
     ESP_ERROR_CHECK(nvs_result);
 
-    ESP_ERROR_CHECK(jpeg_lcd_sink_init());
+#if CONFIG_HANDHELD_LOCAL_10FPS_TEST
+    const bool lcd_enabled = true;
+#else
+    const bool lcd_enabled = CONFIG_JPEG_STREAM_SERVER_HOST[0] != '\0';
+#endif
+    if (lcd_enabled) {
+        ESP_ERROR_CHECK(jpeg_lcd_sink_init());
+    } else {
+        ESP_LOGI(TAG, "control-only mode: LCD/JPEG buffers are not allocated");
+    }
     // show_boot_color_test();  // Disabled while testing server RGB332 frames.
 
-#if CONFIG_HANDHELD_LOCAL_BNO085_LCD_TEST
+#if CONFIG_HANDHELD_LOCAL_BNO085_LCD_TEST || CONFIG_HANDHELD_CONTROL_UDP
     ESP_ERROR_CHECK(bno085_local_test_start());
-    lcd_gpio_writer_set_transfer_gate(bno085_local_test_lcd_begin,
-                                      bno085_local_test_lcd_end);
-    ESP_LOGI(TAG, "combined local BNO085 + LCD test started");
+    if (lcd_enabled) {
+        lcd_gpio_writer_set_transfer_gate(bno085_local_test_lcd_begin,
+                                          bno085_local_test_lcd_end);
+        ESP_LOGI(TAG, "BNO085 service and LCD I/O gate started");
+    } else {
+        ESP_LOGI(TAG, "BNO085 service started without LCD I/O");
+    }
 #endif
 
 #if CONFIG_HANDHELD_LOCAL_10FPS_TEST
@@ -147,11 +162,21 @@ void app_main(void)
 #endif
 #endif
 
-    if (CONFIG_HANDHELD_WIFI_SSID[0] == '\0' ||
-        CONFIG_JPEG_STREAM_SERVER_HOST[0] == '\0') {
-        ESP_LOGE(TAG, "set Wi-Fi and image relay host with: idf.py menuconfig");
+    if (CONFIG_HANDHELD_WIFI_SSID[0] == '\0') {
+        ESP_LOGE(TAG, "set Wi-Fi with: idf.py menuconfig");
         return;
     }
+#if CONFIG_HANDHELD_CONTROL_UDP
+    if (CONFIG_HANDHELD_CONTROL_BACKEND_HOST[0] == '\0') {
+        ESP_LOGE(TAG, "set Handheld Control Backend/proxy host with: idf.py menuconfig");
+        return;
+    }
+#else
+    if (CONFIG_JPEG_STREAM_SERVER_HOST[0] == '\0') {
+        ESP_LOGE(TAG, "set image relay host with: idf.py menuconfig");
+        return;
+    }
+#endif
 
     s_wifi_events = xEventGroupCreate();
     ESP_ERROR_CHECK(s_wifi_events == NULL ? ESP_ERR_NO_MEM : ESP_OK);
@@ -160,16 +185,30 @@ void app_main(void)
     xEventGroupWaitBits(s_wifi_events, WIFI_CONNECTED_BIT, pdFALSE, pdTRUE,
                         portMAX_DELAY);
 
-    const jpeg_stream_client_config_t client_config = {
-        .server_host = CONFIG_JPEG_STREAM_SERVER_HOST,
-        .server_port = CONFIG_JPEG_STREAM_SERVER_PORT,
-        .max_frame_bytes = CONFIG_JPEG_STREAM_MAX_FRAME_BYTES,
-        .receive_timeout_ms = CONFIG_JPEG_STREAM_RX_TIMEOUT_MS,
-        .reconnect_initial_ms = 1000,
-        .reconnect_max_ms = 10000,
-        .on_frame = on_jpeg_frame,
-        .user_context = NULL,
+#if CONFIG_HANDHELD_CONTROL_UDP
+    const handheld_control_udp_config_t control_config = {
+        .backend_host = CONFIG_HANDHELD_CONTROL_BACKEND_HOST,
+        .backend_port = CONFIG_HANDHELD_CONTROL_BACKEND_PORT,
+        .device_id = CONFIG_HANDHELD_CONTROL_DEVICE_ID,
     };
-    ESP_ERROR_CHECK(jpeg_stream_client_start(&client_config));
-    ESP_LOGI(TAG, "JPEG stream client started");
+    ESP_ERROR_CHECK(handheld_control_udp_start(&control_config));
+    ESP_LOGI(TAG, "Handheld Control UDP started");
+#endif
+
+    if (CONFIG_JPEG_STREAM_SERVER_HOST[0] != '\0') {
+        const jpeg_stream_client_config_t client_config = {
+            .server_host = CONFIG_JPEG_STREAM_SERVER_HOST,
+            .server_port = CONFIG_JPEG_STREAM_SERVER_PORT,
+            .max_frame_bytes = CONFIG_JPEG_STREAM_MAX_FRAME_BYTES,
+            .receive_timeout_ms = CONFIG_JPEG_STREAM_RX_TIMEOUT_MS,
+            .reconnect_initial_ms = 1000,
+            .reconnect_max_ms = 10000,
+            .on_frame = on_jpeg_frame,
+            .user_context = NULL,
+        };
+        ESP_ERROR_CHECK(jpeg_stream_client_start(&client_config));
+        ESP_LOGI(TAG, "JPEG stream client started");
+    } else {
+        ESP_LOGI(TAG, "JPEG stream disabled: no relay host configured");
+    }
 }

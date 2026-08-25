@@ -17,6 +17,34 @@ config HANDHELD_LOCAL_10FPS_TEST
         forever. Wi-Fi and server streaming are skipped while this is enabled.
         Disable it to use the network JPEG stream client.
 
+config HANDHELD_CONTROL_UDP
+    bool "Send BNO085 Handheld Control over UDP"
+    default n
+    depends on !HANDHELD_LOCAL_10FPS_TEST
+    help
+        Start the BNO085 service task and transmit RFHC v1 orientation
+        packets at 50 Hz. For a Tailscale integration test, enter the LAN
+        address of the local UDP proxy, not the remote 100.x address.
+
+config HANDHELD_CONTROL_BACKEND_HOST
+    string "Handheld Control Backend or proxy IPv4/hostname"
+    default ""
+    depends on HANDHELD_CONTROL_UDP
+    help
+        Local device setting. Do not commit a site-specific address.
+
+config HANDHELD_CONTROL_BACKEND_PORT
+    int "Handheld Control UDP port"
+    range 1 65535
+    default 9200
+    depends on HANDHELD_CONTROL_UDP
+
+config HANDHELD_CONTROL_DEVICE_ID
+    int "Handheld numeric device ID"
+    range 1 2147483647
+    default 1
+    depends on HANDHELD_CONTROL_UDP
+
 choice HANDHELD_LOCAL_BNO_DISPLAY_MODE
     prompt "Combined BNO085 test display mode"
     depends on HANDHELD_LOCAL_BNO085_LCD_TEST
@@ -129,7 +157,7 @@ config BNO085_LCD_REPORT_INTERVAL_US
 
 config BNO085_INT_POLLING
     bool "Poll BNO085 INT from ImuTask instead of using a GPIO ISR"
-    default y if HANDHELD_LOCAL_BNO085_LCD_TEST
+    default y if HANDHELD_LOCAL_BNO085_LCD_TEST || HANDHELD_CONTROL_UDP
     default n
     help
         Keep INT physically connected to GPIO41 but disable its GPIO interrupt.

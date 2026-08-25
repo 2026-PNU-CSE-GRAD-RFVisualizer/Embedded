@@ -15,7 +15,11 @@
 #define IMU_TASK_PRIORITY 7
 #define IMU_LOG_DIVIDER 50U
 #define IMU_STATS_PERIOD_US 5000000ULL
-#define COMBINED_REPORT_INTERVAL_US CONFIG_BNO085_LCD_REPORT_INTERVAL_US
+#if CONFIG_HANDHELD_LOCAL_BNO085_LCD_TEST
+#define ACTIVE_REPORT_INTERVAL_US CONFIG_BNO085_LCD_REPORT_INTERVAL_US
+#else
+#define ACTIVE_REPORT_INTERVAL_US CONFIG_BNO085_REPORT_INTERVAL_US
+#endif
 
 static const char *TAG = "bno085_lcd_test";
 static SemaphoreHandle_t s_io_window_mutex;
@@ -90,7 +94,7 @@ static void imu_task(void *argument)
              BNO085_INT_GPIO, BNO085_RESET_GPIO);
     ESP_LOGI(TAG, "I2C: address=0x%02X speed=%d report=%s interval=%d us",
              BNO085_I2C_ADDRESS, BNO085_I2C_SPEED_HZ,
-             report_name(report), COMBINED_REPORT_INTERVAL_US);
+             report_name(report), ACTIVE_REPORT_INTERVAL_US);
 
     esp_err_t result = bno085_init();
     if (result != ESP_OK) {
@@ -100,7 +104,7 @@ static void imu_task(void *argument)
         return;
     }
 
-    result = bno085_start_report(report, COMBINED_REPORT_INTERVAL_US);
+    result = bno085_start_report(report, ACTIVE_REPORT_INTERVAL_US);
     if (result != ESP_OK) {
         ESP_LOGE(TAG, "report start failed: %s", esp_err_to_name(result));
         bno085_deinit();

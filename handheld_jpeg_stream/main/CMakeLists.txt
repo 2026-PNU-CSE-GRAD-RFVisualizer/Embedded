@@ -1,6 +1,7 @@
 set(component_sources
         "app_main.c"
         "handheld_control_protocol.c"
+        "handheld_control_udp.c"
         "jpeg_lcd_sink.c"
         "jpeg_stream_client.c"
         "jpeg_stream_protocol.c"
@@ -11,6 +12,7 @@ set(component_sources
 set(main_component_requirements
         esp_event
         esp_driver_gpio
+        esp_hw_support
         esp_lcd
         esp_netif
         esp_timer
@@ -28,7 +30,7 @@ if(CONFIG_HANDHELD_LOCAL_10FPS_TEST)
     endif()
 endif()
 
-if(CONFIG_HANDHELD_LOCAL_BNO085_LCD_TEST)
+if(CONFIG_HANDHELD_LOCAL_BNO085_LCD_TEST OR CONFIG_HANDHELD_CONTROL_UDP)
     list(APPEND component_sources "bno085_local_test.c")
 endif()
 

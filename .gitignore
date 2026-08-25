@@ -41,6 +41,8 @@ sdkconfig
 sdkconfig.old
 handheld_jpeg_stream/sdkconfig.bno_lcd
 handheld_jpeg_stream/sdkconfig.bno_lcd.old
+handheld_jpeg_stream/sdkconfig.control
+handheld_jpeg_stream/sdkconfig.control.old
 
 # Local Wi-Fi credentials for ESP32 RSSI timestamp synchronization
 rssi_esp32_to_stm32/esp32_node/main/time_credentials.h
