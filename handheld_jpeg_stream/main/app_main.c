@@ -103,6 +103,10 @@ static void wifi_start(void)
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_config));
     ESP_ERROR_CHECK(esp_wifi_start());
+    /* A DTIM/listen interval of three batches the 10 FPS TCP stream into
+     * roughly 300 ms bursts. Keep the Handheld awake for even frame pacing. */
+    ESP_ERROR_CHECK(esp_wifi_set_ps(WIFI_PS_NONE));
+    ESP_LOGI(TAG, "Wi-Fi power save disabled for low-latency image streaming");
 }
 
 static void on_jpeg_frame(const jpeg_stream_frame_t *frame, void *user_context)

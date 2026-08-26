@@ -76,12 +76,12 @@ LCD는 정상인데 BNO085 초기화가 실패하면 LCD 시험은 계속 실행
 
 통합 시험에서는 INT를 GPIO41에 그대로 연결하지만 GPIO ISR은 사용하지 않는다. `ImuTask`가 1 ms마다 INT 레벨을 폴링하므로, 부팅 로그에 `INT mode: 1 ms task polling`이 표시되는지 확인한다.
 
-고정 배선에서 BNO085 I2C 전환이 LCD I80 전송과 겹치지 않도록 두 경로를 mutex로 시간 분할한다. LCD 한 프레임을 96줄씩 5개 DMA stripe로 나누며 각 stripe 사이에 BNO 태스크가 대기 중인 샘플을 읽는다. 통합 시험도 센서 출력 주기 20 ms(50 Hz)를 사용하며 BNO085 단독 시험 설정은 변경하지 않는다.
+고정 배선에서 BNO085 I2C 전환이 LCD I80 전송과 겹치지 않도록 두 경로를 mutex로 시간 분할한다. LCD는 NT35510의 RGB666 component/GRAM write phase가 프레임 중간에 끊기지 않도록 한 프레임을 하나의 연속 DMA transaction으로 전송한다. BNO 태스크는 프레임 직후 대기 중인 FIFO 샘플을 처리한다. 통합 시험도 센서 출력 주기 20 ms(50 Hz)를 사용하며 BNO085 단독 시험 설정은 변경하지 않는다.
 
-각 DMA stripe는 독립된 Y 좌표 window와 `RAMWR` command를 사용한다. CS가 해제되고 BNO I2C 작업이 실행된 뒤에도 이전 stripe의 연속 write 상태나 RGB666 component phase가 보존된다고 가정하지 않는다.
+각 프레임은 전체 `800×480` window와 한 번의 `RAMWR` command를 사용한다. 프레임 중간에 CS를 해제하거나 BNO I2C 작업을 끼우지 않는다.
 
 통합 시험의 LCD I80 clock은 긴 고정 배선에서 발생하는 간헐적인 색상 잡음을 줄이면서 10 FPS를 유지하기 위한 절충값인 12 MHz를 사용한다.
 
-LCD I80 DMA 경로는 데이터선과 WR/DC/CS를 10 mA drive strength로 구동한다. 각 stripe의 DMA 완료는 최대 200 ms만 기다리며, 완료 interrupt가 누락되면 BNO와 공유한 I/O mutex를 해제하고 오류를 기록한 뒤 ESP32-S3를 재시작해 영구 정지를 방지한다.
+LCD I80 DMA 경로는 긴 16-bit Dupont 배선의 edge-rate 여유를 확보하기 위해 데이터선과 WR/DC/CS를 20 mA drive strength로 구동한다. 전체 프레임 DMA 완료는 최대 200 ms만 기다리며, 완료 interrupt가 누락되면 BNO와 공유한 I/O mutex를 해제하고 오류를 기록한 뒤 ESP32-S3를 재시작해 영구 정지를 방지한다.
 
 통합 시험의 10개 로컬 Frame은 순차 재생하지 않고 시작 시점의 BNO Yaw를 중앙으로 자동 Recenter한 뒤 상대 Yaw에 따라 선택한다. 이는 네트워크와 Graphics 없이 센서에서 화면까지의 체감 반응 시간을 확인하는 진단 기능이며, 실제 3D Camera 렌더링을 대신하지 않는다.

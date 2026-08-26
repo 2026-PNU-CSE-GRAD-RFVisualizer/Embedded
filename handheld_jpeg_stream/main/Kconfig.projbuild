@@ -151,9 +151,10 @@ config BNO085_LCD_REPORT_INTERVAL_US
     default 20000
     depends on HANDHELD_LOCAL_BNO085_LCD_TEST
     help
-        LCD I80 frames are split into DMA stripes so BNO085 I2C can run between
-        stripes without overlapping the parallel bus. 20000 microseconds keeps
-        the production target of 50 Hz. The standalone interval is independent.
+        LCD I80 uses one continuous full-frame DMA transaction to preserve the
+        NT35510 RGB666 component and GRAM write phase. BNO085 I2C services its
+        FIFO immediately after each frame. 20000 microseconds keeps the
+        production target of 50 Hz. The standalone interval is independent.
 
 config BNO085_INT_POLLING
     bool "Poll BNO085 INT from ImuTask instead of using a GPIO ISR"

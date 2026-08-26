@@ -1,4 +1,4 @@
-# RGB332 zlib network test
+# RGB332+zlib 10 FPS Handheld stream
 
 The firmware accepts both payload types in the existing 22-byte RFJF version
 1 header:
@@ -31,6 +31,11 @@ Ten FPS requires `inflate + draw` to remain below 100 ms on the device and the
 network to deliver the next compressed frame within the same budget. Slow or
 superseded frames are dropped instead of accumulating latency.
 
-This flag assignment is an embedded-side experimental extension. Synchronize
-it with the central `INTERFACE.md` and the production image relay before using
-it as the final cross-repository contract.
+RGB332+zlib is the selected 10 FPS Handheld integration path. `flags=0` JPEG
+remains supported as a compatibility and diagnostic fallback, but full-size
+800x480 JPEG decoding is not fast enough for the target display rate on the
+current ESP32-S3 implementation.
+
+The central `INTERFACE.md` and `CURRENT_STATUS.md` still describe `flags=1` as
+experimental and must be synchronized with this decision before the final
+cross-repository integration is marked complete.

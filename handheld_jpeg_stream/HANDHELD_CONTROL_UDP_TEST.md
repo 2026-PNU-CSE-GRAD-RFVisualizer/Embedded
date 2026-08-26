@@ -23,6 +23,14 @@ cd E:\RFVisualizer_Workspace\Embedded\handheld_jpeg_stream
 python .\tools\rfhc_udp_proxy.py 100.85.80.106
 ```
 
+Quaternion과 JPEG를 동시에 중계하는 종단 시험에서는 위 UDP 전용 Proxy 대신 다음 통합 Proxy를 실행한다.
+
+```powershell
+python .\tools\handheld_proxy.py --hub 100.85.80.106
+```
+
+통합 Proxy는 로컬 UDP `9200`을 Hub UDP `9200`으로 전달하고, 로컬 TCP `9102`와 Hub viewer TCP `9102`를 연결한다. 두 Proxy를 동시에 실행하면 UDP `9200` Port가 충돌하므로 하나만 실행한다.
+
 Windows 방화벽에서 Python의 Private Network UDP 9200 inbound를 허용한다.
 
 ## 2. ESP32-S3 설정과 빌드
