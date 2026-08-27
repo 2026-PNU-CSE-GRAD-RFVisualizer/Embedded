@@ -40,6 +40,13 @@ jpeg_stream_header_result_t jpeg_stream_parse_header(
     return JPEG_STREAM_HEADER_OK;
 }
 
+bool jpeg_stream_flag_is_supported(uint8_t flags)
+{
+    return flags == JPEG_STREAM_FLAG_JPEG ||
+           flags == JPEG_STREAM_FLAG_RGB332_ZLIB ||
+           flags == JPEG_STREAM_FLAG_PALETTE256_ZLIB;
+}
+
 const char *jpeg_stream_header_result_name(jpeg_stream_header_result_t result)
 {
     switch (result) {

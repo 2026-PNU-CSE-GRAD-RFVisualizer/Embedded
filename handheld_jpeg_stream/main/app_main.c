@@ -113,7 +113,8 @@ static void on_jpeg_frame(const jpeg_stream_frame_t *frame, void *user_context)
 {
     (void)user_context;
     esp_err_t result;
-    if (frame->flags == JPEG_STREAM_FLAG_RGB332_ZLIB) {
+    if (frame->flags == JPEG_STREAM_FLAG_RGB332_ZLIB ||
+        frame->flags == JPEG_STREAM_FLAG_PALETTE256_ZLIB) {
         result = rgb332_zlib_sink_render(frame);
     } else {
         result = jpeg_lcd_sink_render(frame);

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -11,6 +12,7 @@
  * encoding so existing JPEG producers remain compatible. */
 #define JPEG_STREAM_FLAG_JPEG        0x00u
 #define JPEG_STREAM_FLAG_RGB332_ZLIB 0x01u
+#define JPEG_STREAM_FLAG_PALETTE256_ZLIB 0x02u
 
 typedef struct {
     uint8_t flags;
@@ -32,4 +34,5 @@ jpeg_stream_header_result_t jpeg_stream_parse_header(
     size_t max_payload_bytes,
     jpeg_stream_header_t *out);
 
+bool jpeg_stream_flag_is_supported(uint8_t flags);
 const char *jpeg_stream_header_result_name(jpeg_stream_header_result_t result);

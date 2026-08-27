@@ -43,6 +43,16 @@ int main(void)
     assert(parsed.timestamp_ms == UINT64_C(1785720000000));
     assert(parsed.payload_length == 123456);
 
+    make_header(raw, JPEG_STREAM_FLAG_PALETTE256_ZLIB, 105000);
+    assert(jpeg_stream_parse_header(raw, 524288, &parsed) ==
+           JPEG_STREAM_HEADER_OK);
+    assert(parsed.flags == JPEG_STREAM_FLAG_PALETTE256_ZLIB);
+    assert(parsed.payload_length == 105000);
+    assert(jpeg_stream_flag_is_supported(JPEG_STREAM_FLAG_JPEG));
+    assert(jpeg_stream_flag_is_supported(JPEG_STREAM_FLAG_RGB332_ZLIB));
+    assert(jpeg_stream_flag_is_supported(JPEG_STREAM_FLAG_PALETTE256_ZLIB));
+    assert(!jpeg_stream_flag_is_supported(3));
+
     raw[0] = 0;
     assert(jpeg_stream_parse_header(raw, 524288, &parsed) ==
            JPEG_STREAM_HEADER_BAD_MAGIC);
@@ -56,6 +66,6 @@ int main(void)
     assert(jpeg_stream_parse_header(raw, 524288, &parsed) ==
            JPEG_STREAM_HEADER_TOO_LARGE);
 
-    puts("4/4 protocol tests passed");
+    puts("5/5 protocol tests passed");
     return 0;
 }

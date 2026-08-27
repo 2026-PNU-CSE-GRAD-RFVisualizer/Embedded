@@ -40,9 +40,10 @@ typedef struct {
     uint16_t red_green;
     uint16_t blue_red_mask;
     uint16_t green_blue;
-} rgb332_lookup_t;
+} indexed_lookup_t;
 
-static rgb332_lookup_t rgb332_lookup[256];
+static indexed_lookup_t indexed_lookup[256];
+static bool indexed_lookup_is_rgb332;
 
 #define LCD_FRAME_PIXELS ((size_t)LCD_H_RES * LCD_V_RES)
 /*
@@ -93,6 +94,14 @@ static inline uint8_t rgb565_blue8(uint16_t color)
     return (uint8_t)(((b5 << 3) | (b5 >> 2)) & 0xFC);
 }
 
+static void set_indexed_lookup(unsigned index, uint8_t red8,
+                               uint8_t green8, uint8_t blue8)
+{
+    indexed_lookup[index].red_green = ((uint16_t)red8 << 8) | green8;
+    indexed_lookup[index].blue_red_mask = ((uint16_t)blue8 << 8) | red8;
+    indexed_lookup[index].green_blue = ((uint16_t)green8 << 8) | blue8;
+}
+
 static void prepare_rgb332_lookup(void)
 {
     for (unsigned value = 0; value < 256; ++value) {
@@ -106,13 +115,22 @@ static void prepare_rgb332_lookup(void)
         const uint8_t green8 = green6 << 2;
         const uint8_t blue8 = blue6 << 2;
 
-        rgb332_lookup[value].red_green =
-            ((uint16_t)red8 << 8) | green8;
-        rgb332_lookup[value].blue_red_mask =
-            ((uint16_t)blue8 << 8) | red8;
-        rgb332_lookup[value].green_blue =
-            ((uint16_t)green8 << 8) | blue8;
+        set_indexed_lookup(value, red8, green8, blue8);
     }
+    indexed_lookup_is_rgb332 = true;
+}
+
+static void prepare_palette256_lookup(const uint8_t *palette_rgb565_be)
+{
+    for (unsigned index = 0; index < 256U; ++index) {
+        const size_t offset = (size_t)index * 2U;
+        const uint16_t color =
+            ((uint16_t)palette_rgb565_be[offset] << 8) |
+            palette_rgb565_be[offset + 1U];
+        set_indexed_lookup(index, rgb565_red8(color), rgb565_green8(color),
+                           rgb565_blue8(color));
+    }
+    indexed_lookup_is_rgb332 = false;
 }
 
 static esp_err_t configure_data_bus(gpio_mode_t mode)
@@ -747,6 +765,27 @@ esp_err_t lcd_gpio_writer_draw(const uint16_t *pixels, size_t pixel_count)
     return dma_send_pixels(pixels, 0, false, pixel_count);
 }
 
+static esp_err_t draw_indexed_pixels(const uint8_t *pixels)
+{
+    for (size_t stripe = 0; stripe < LCD_STRIPE_COUNT; ++stripe) {
+        const size_t input_base = stripe * LCD_STRIPE_PIXELS;
+        for (size_t i = 0; i < LCD_STRIPE_PIXELS; i += 2) {
+            const indexed_lookup_t *first =
+                &indexed_lookup[pixels[input_base + i]];
+            const indexed_lookup_t *second =
+                &indexed_lookup[pixels[input_base + i + 1U]];
+            uint16_t *output = &dma_frame[(i / 2U) * 3U];
+            output[0] = first->red_green;
+            output[1] = (first->blue_red_mask & 0xFF00) |
+                        (second->blue_red_mask & 0x00FF);
+            output[2] = second->green_blue;
+        }
+        ESP_RETURN_ON_ERROR(dma_send_packed_stripe(stripe), TAG,
+                            "indexed stripe transfer failed");
+    }
+    return ESP_OK;
+}
+
 esp_err_t lcd_gpio_writer_draw_rgb332(const uint8_t *pixels,
                                       size_t pixel_count)
 {
@@ -756,21 +795,29 @@ esp_err_t lcd_gpio_writer_draw_rgb332(const uint8_t *pixels,
                         ESP_ERR_INVALID_SIZE, TAG,
                         "expected one complete 800x480 RGB332 frame");
 
-    for (size_t stripe = 0; stripe < LCD_STRIPE_COUNT; ++stripe) {
-        const size_t input_base = stripe * LCD_STRIPE_PIXELS;
-        for (size_t i = 0; i < LCD_STRIPE_PIXELS; i += 2) {
-            const rgb332_lookup_t *first =
-                &rgb332_lookup[pixels[input_base + i]];
-            const rgb332_lookup_t *second =
-                &rgb332_lookup[pixels[input_base + i + 1U]];
-            uint16_t *output = &dma_frame[(i / 2U) * 3U];
-            output[0] = first->red_green;
-            output[1] = (first->blue_red_mask & 0xFF00) |
-                        (second->blue_red_mask & 0x00FF);
-            output[2] = second->green_blue;
-        }
-        ESP_RETURN_ON_ERROR(dma_send_packed_stripe(stripe), TAG,
-                            "RGB332 stripe transfer failed");
+    if (!indexed_lookup_is_rgb332) {
+        prepare_rgb332_lookup();
     }
-    return ESP_OK;
+    return draw_indexed_pixels(pixels);
+}
+
+esp_err_t lcd_gpio_writer_draw_palette256(const uint8_t *indices,
+                                          size_t pixel_count,
+                                          const uint8_t *palette_rgb565_be,
+                                          size_t palette_bytes)
+{
+    ESP_RETURN_ON_FALSE(initialized && indices && palette_rgb565_be,
+                        ESP_ERR_INVALID_STATE, TAG,
+                        "writer is not initialized");
+    ESP_RETURN_ON_FALSE(pixel_count == LCD_FRAME_PIXELS,
+                        ESP_ERR_INVALID_SIZE, TAG,
+                        "expected one complete 800x480 palette index frame");
+    ESP_RETURN_ON_FALSE(palette_bytes == 512U, ESP_ERR_INVALID_SIZE, TAG,
+                        "expected 256 RGB565 palette entries");
+
+    /* RFJF flags=2 carries the RGB565 palette in network byte order. Convert
+     * all 256 entries to the panel's verified RGB666/I80 packed lookup once
+     * per frame, then reuse the same stripe and DMA path as RGB332. */
+    prepare_palette256_lookup(palette_rgb565_be);
+    return draw_indexed_pixels(indices);
 }

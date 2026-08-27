@@ -109,7 +109,7 @@ config JPEG_STREAM_MAX_FRAME_BYTES
     default 524288
     help
         This embedded limit is deliberately lower than the relay's 8 MiB
-        protocol limit. It covers JPEG and compressed RGB332 payloads. Two
+        protocol limit. It covers JPEG and indexed zlib payloads. Two
         buffers of this size are allocated in PSRAM.
 
 config JPEG_STREAM_RX_TIMEOUT_MS
@@ -127,7 +127,7 @@ config JPEG_STREAM_SINK_TASK_STACK
     range 4096 16384
     default 16384
     help
-        The RGB332 zlib path calls the ROM miniz inflater, whose decompressor
+        The indexed zlib paths call the ROM miniz inflater, whose decompressor
         state requires substantially more stack than the JPEG-only path.
 
 config BNO085_I2C_ADDRESS

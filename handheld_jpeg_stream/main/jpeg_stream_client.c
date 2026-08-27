@@ -58,7 +58,7 @@ static bool is_supported_payload(const jpeg_stream_header_t *header,
     if (header->flags == JPEG_STREAM_FLAG_JPEG) {
         return is_jpeg(data, header->payload_length);
     }
-    return header->flags == JPEG_STREAM_FLAG_RGB332_ZLIB;
+    return jpeg_stream_flag_is_supported(header->flags);
 }
 
 static bool recv_exactly(int sock, uint8_t *destination, size_t length)

@@ -34,10 +34,10 @@ JPEG 스트림은 서로 다른 경로다. ESP32-S3는 이미지 중계 서버�
 22-byte header
   magic     uint32  0x52464A46 ('RFJF')
   version   uint8   1
-  flags     uint8   0 (reserved)
+  flags     uint8   0=JPEG, 1=RGB332+zlib, 2=palette256+zlib
   seq       uint32  frame sequence
   ts_ms     uint64  Unix epoch milliseconds
-  length    uint32  following JPEG byte count
+  length    uint32  following encoded payload byte count
 payload     byte[length]
 ```
 
@@ -83,7 +83,9 @@ idf.py -p COMx flash monitor
 ## 구현상 안전장치
 
 - TCP `recv()`가 header/payload를 조각내도 정확한 길이까지 반복 수신
-- magic/version/length 및 JPEG SOI(`FFD8`)/EOI(`FFD9`) 검증
+- magic/version/length 및 형식별 payload 검증
+- `flags=1` 해제 결과 384,000 byte, `flags=2` 해제 결과 384,512 byte 검증
+- `flags=2`의 RGB565 big-endian 팔레트를 매 프레임 LCD DMA lookup으로 변환
 - 네트워크 byte order를 byte 단위로 해석하여 struct padding 문제 제거
 - PSRAM JPEG buffer A/B와 1칸 ready queue 사용
 - 디코더가 느리면 대기 중인 오래된 frame을 버리고 최신 frame 유지
