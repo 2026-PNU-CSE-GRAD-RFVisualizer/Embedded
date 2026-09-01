@@ -1,6 +1,6 @@
 # BNO085 → RFHC UDP 실기기 시험
 
-이 시험은 실제 BNO085 Quaternion을 ESP32-S3에서 RFHC v1 52-byte Packet으로 직렬화해 50 Hz로 전송한다. 버튼 Event, `q_mount` 최종 보정 및 JPEG 수신은 첫 시험 범위에서 제외한다.
+이 시험은 실제 BNO085 Quaternion과 두 버튼의 debounce된 현재 상태를 ESP32-S3에서 RFHC v1 52-byte Packet으로 직렬화해 50 Hz로 전송한다. `q_mount` 최종 보정 및 JPEG 수신은 이 시험 범위에서 제외한다.
 
 Tailscale 구성에서는 ESP32-S3가 Tailscale 주소로 직접 전송하지 않는다.
 
@@ -68,8 +68,10 @@ RFVisualizer handheld JPEG stream
 BNO085 service and LCD I/O gate started
 waiting for Wi-Fi
 Handheld Control UDP started
+active-low buttons: teleport=GPIO17 height_cycle=GPIO19 debounce=25 ms
 RFHC v1 target=192.168.0.3:9200 device_id=1 ... rate=50Hz
 UDP path ready
+buttons: teleport=released height_cycle=released RFHC_flags=0x01
 stats: sent=... send_errors=0 serialize_errors=0 no_sample=...
 ```
 
@@ -86,5 +88,21 @@ Backend 합격 기준:
 - Sequence Gap 0
 - 센서를 돌리면 Quaternion 값이 연속적으로 변함
 - 송신 중단 500 ms 후 stale
+
+버튼 합격 기준:
+
+- 아무 버튼도 누르지 않으면 `flags & 0x06 == 0x00`
+- 텔레포트(GPIO17)만 누르면 `flags & 0x06 == 0x02`
+- Height-cycle(GPIO19)만 누르면 `flags & 0x06 == 0x04`
+- 둘 다 누르면 `flags & 0x06 == 0x06`
+- 누른 상태를 유지하는 동안 bit가 유지되고, 뗀 뒤 debounce 후 0으로 돌아옴
+- 모든 Packet의 `event_seq`가 0이며 3-Packet Event 반복 로직이 없음
+
+ESP32-S3 없이 Backend의 held/release 처리를 먼저 확인하려면 PC 모의 송신기를 쓸 수 있다.
+
+```powershell
+python .\tools\rfhc_udp_sender.py <BACKEND_IP> --duration 5 --mode identity --buttons teleport --hold-start 1 --hold-duration 2
+python .\tools\rfhc_udp_sender.py <BACKEND_IP> --duration 5 --mode identity --buttons height --hold-start 1 --hold-duration 2
+```
 
 현재 `q_mount`는 초기 통합용 identity로 처리한다. Packet 도달과 Quaternion 변화가 확인된 뒤 실제 센서 장착 방향을 기준으로 Yaw·Pitch·Roll 90도 시험을 수행해 최종 축 변환을 확정한다.

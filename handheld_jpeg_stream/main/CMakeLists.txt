@@ -1,5 +1,6 @@
 set(component_sources
         "app_main.c"
+        "handheld_buttons.c"
         "handheld_control_protocol.c"
         "handheld_control_udp.c"
         "jpeg_lcd_sink.c"

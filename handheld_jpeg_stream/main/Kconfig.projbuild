@@ -22,9 +22,10 @@ config HANDHELD_CONTROL_UDP
     default n
     depends on !HANDHELD_LOCAL_10FPS_TEST
     help
-        Start the BNO085 service task and transmit RFHC v1 orientation
-        packets at 50 Hz. For a Tailscale integration test, enter the LAN
-        address of the local UDP proxy, not the remote 100.x address.
+        Start the BNO085 service task and transmit RFHC v1 orientation plus
+        debounced teleport/height-cycle button states at 50 Hz. For a
+        Tailscale integration test, enter the LAN address of the local UDP
+        proxy, not the remote 100.x address.
 
 config HANDHELD_CONTROL_BACKEND_HOST
     string "Handheld Control Backend or proxy IPv4/hostname"

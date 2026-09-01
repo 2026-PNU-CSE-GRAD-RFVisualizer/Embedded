@@ -2,7 +2,7 @@
 
 This is a PC-side integration aid. It verifies the UDP listener, firewall,
 RFHC parser, sequence handling, stale timeout, and Backend-to-Graphics path
-before the ESP32-S3 ControlTxTask is available.
+without requiring the ESP32-S3 hardware.
 """
 
 from __future__ import annotations
@@ -21,9 +21,8 @@ VERSION = 1
 PACKET_SIZE = 52
 DEFAULT_PORT = 9200
 ORIENTATION_VALID = 0x01
-REQUEST_POSITION_UPDATE = 0x02
-RECENTER_ORIENTATION = 0x04
-EVENT_REPEAT_COUNT = 3
+TELEPORT_BUTTON_HELD = 0x02
+HEIGHT_CYCLE_BUTTON_HELD = 0x04
 
 GOLDEN_VECTOR = bytes.fromhex(
     "524648430101003400000001123456780000000100000000"
@@ -38,7 +37,6 @@ def build_packet(
     quaternion: tuple[float, float, float, float],
     device_id: int = 1,
     flags: int = ORIENTATION_VALID,
-    event_seq: int = 0,
 ) -> bytes:
     if session_id == 0:
         raise ValueError("session_id must be non-zero")
@@ -57,7 +55,7 @@ def build_packet(
         device_id,
         session_id,
         sample_seq & 0xFFFFFFFF,
-        event_seq,
+        0,  # event_seq: retained RFHC v1 field, no longer used
         0,  # timestamp_ms: TIME_SYNCED is not set
         x,
         y,
@@ -88,7 +86,22 @@ def self_test() -> None:
             f"RFHC golden vector mismatch\nexpected={GOLDEN_VECTOR.hex()}\n"
             f"actual  ={packet.hex()}"
         )
-    print("RFHC v1 self-test passed: 52-byte Backend golden vector matched")
+    button_packet = build_packet(
+        session_id=0x12345678,
+        sample_seq=2,
+        quaternion=(0.0, 0.0, 0.0, 1.0),
+        flags=(
+            ORIENTATION_VALID
+            | TELEPORT_BUTTON_HELD
+            | HEIGHT_CYCLE_BUTTON_HELD
+        ),
+    )
+    if button_packet[5] != 0x07 or button_packet[20:24] != b"\x00" * 4:
+        raise AssertionError("RFHC button flags or event_seq encoding mismatch")
+    print(
+        "RFHC v1 self-test passed: golden vector, held-state flags, "
+        "and event_seq=0 matched"
+    )
 
 
 def parse_args() -> argparse.Namespace:
@@ -101,11 +114,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--rate", type=float, default=50.0, help="packets/second")
     parser.add_argument("--mode", choices=("identity", "yaw"), default="yaw")
     parser.add_argument(
-        "--event",
-        choices=("none", "position", "recenter"),
+        "--buttons",
+        choices=("none", "teleport", "height", "both"),
         default="none",
-        help="repeat one event flag in the first three packets",
+        help="button held-state to assert during the configured hold window",
     )
+    parser.add_argument("--hold-start", type=float, default=1.0, help="seconds")
+    parser.add_argument("--hold-duration", type=float, default=2.0, help="seconds")
     parser.add_argument("--self-test", action="store_true")
     return parser.parse_args()
 
@@ -119,6 +134,8 @@ def main() -> None:
         raise SystemExit("host is required unless --self-test is used")
     if args.duration <= 0 or args.rate <= 0:
         raise SystemExit("--duration and --rate must be positive")
+    if args.hold_start < 0 or args.hold_duration < 0:
+        raise SystemExit("--hold-start and --hold-duration must be non-negative")
 
     session_id = secrets.randbits(32) or 1
     interval = 1.0 / args.rate
@@ -127,16 +144,19 @@ def main() -> None:
     next_send = start
     sample_seq = 1
     sent = 0
-    event_flag = {
+    held_flags = {
         "none": 0,
-        "position": REQUEST_POSITION_UPDATE,
-        "recenter": RECENTER_ORIENTATION,
-    }[args.event]
+        "teleport": TELEPORT_BUTTON_HELD,
+        "height": HEIGHT_CYCLE_BUTTON_HELD,
+        "both": TELEPORT_BUTTON_HELD | HEIGHT_CYCLE_BUTTON_HELD,
+    }[args.buttons]
 
     print(
         f"sending RFHC v1 to {args.host}:{args.port}, rate={args.rate:g} Hz, "
         f"duration={args.duration:g} s, mode={args.mode}, "
-        f"event={args.event}, session_id=0x{session_id:08X}"
+        f"buttons={args.buttons}, hold=[{args.hold_start:g}, "
+        f"{args.hold_start + args.hold_duration:g}) s, "
+        f"session_id=0x{session_id:08X}"
     )
 
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as udp:
@@ -148,16 +168,17 @@ def main() -> None:
                 time.sleep(next_send - now)
                 now = time.monotonic()
 
+            elapsed = now - start
+            buttons_held = (
+                held_flags
+                if args.hold_start <= elapsed < args.hold_start + args.hold_duration
+                else 0
+            )
             packet = build_packet(
                 session_id=session_id,
                 sample_seq=sample_seq,
-                quaternion=quaternion_for_mode(args.mode, now - start),
-                flags=(
-                    ORIENTATION_VALID | event_flag
-                    if event_flag and sample_seq <= EVENT_REPEAT_COUNT
-                    else ORIENTATION_VALID
-                ),
-                event_seq=1 if event_flag else 0,
+                quaternion=quaternion_for_mode(args.mode, elapsed),
+                flags=ORIENTATION_VALID | buttons_held,
             )
             udp.sendto(packet, (args.host, args.port))
             sent += 1

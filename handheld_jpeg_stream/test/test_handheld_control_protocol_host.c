@@ -63,7 +63,16 @@ int main(void)
     assert(handheld_control_serialize(&packet, serialized) ==
            HANDHELD_CONTROL_SERIALIZE_BAD_SESSION_ID);
 
-    puts("6/6 RFHC serializer tests passed; backend vector matched");
+    packet = make_identity_packet();
+    packet.flags |= HANDHELD_CONTROL_FLAG_TELEPORT_BUTTON_HELD |
+                    HANDHELD_CONTROL_FLAG_HEIGHT_CYCLE_BUTTON_HELD;
+    packet.event_seq = UINT32_C(0);
+    assert(handheld_control_serialize(&packet, serialized) ==
+           HANDHELD_CONTROL_SERIALIZE_OK);
+    assert(serialized[5] == UINT8_C(0x07));
+    assert(serialized[20] == 0 && serialized[21] == 0 &&
+           serialized[22] == 0 && serialized[23] == 0);
+
+    puts("7/7 RFHC serializer tests passed; backend vector and button flags matched");
     return 0;
 }
-

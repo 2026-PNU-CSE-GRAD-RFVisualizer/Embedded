@@ -16,6 +16,7 @@
 #include "freertos/task.h"
 #include "lwip/netdb.h"
 
+#include "handheld_buttons.h"
 #include "handheld_control_protocol.h"
 
 #define CONTROL_TASK_STACK_BYTES 4096
@@ -38,6 +39,18 @@ typedef struct {
 
 static const char *TAG = "handheld_control";
 static control_state_t s_control;
+
+static uint8_t button_flags(handheld_button_state_t buttons)
+{
+    uint8_t flags = 0;
+    if (buttons.teleport_held) {
+        flags |= HANDHELD_CONTROL_FLAG_TELEPORT_BUTTON_HELD;
+    }
+    if (buttons.height_cycle_held) {
+        flags |= HANDHELD_CONTROL_FLAG_HEIGHT_CYCLE_BUTTON_HELD;
+    }
+    return flags;
+}
 
 static int connect_udp(void)
 {
@@ -102,6 +115,7 @@ static void control_task(void *argument)
     (void)argument;
     int sock = -1;
     uint32_t sample_seq = 1;
+    uint8_t last_button_flags = UINT8_MAX;
     TickType_t next_wake = xTaskGetTickCount();
     TickType_t next_stats = next_wake + pdMS_TO_TICKS(CONTROL_STATS_PERIOD_MS);
 
@@ -124,12 +138,25 @@ static void control_task(void *argument)
             ESP_LOGI(TAG, "UDP path ready");
         }
 
+        const handheld_button_state_t buttons = handheld_buttons_sample();
+        const uint8_t current_button_flags = button_flags(buttons);
+        if (current_button_flags != last_button_flags) {
+            ESP_LOGI(TAG,
+                     "buttons: teleport=%s height_cycle=%s RFHC_flags=0x%02X",
+                     buttons.teleport_held ? "held" : "released",
+                     buttons.height_cycle_held ? "held" : "released",
+                     (unsigned)(HANDHELD_CONTROL_FLAG_ORIENTATION_VALID |
+                                current_button_flags));
+            last_button_flags = current_button_flags;
+        }
+
         bno085_quaternion_t quaternion;
         if (!bno085_get_latest_quaternion(&quaternion)) {
             s_control.no_sample++;
         } else {
             const handheld_control_packet_t packet = {
-                .flags = HANDHELD_CONTROL_FLAG_ORIENTATION_VALID,
+                .flags = HANDHELD_CONTROL_FLAG_ORIENTATION_VALID |
+                         current_button_flags,
                 .device_id = s_control.device_id,
                 .session_id = s_control.session_id,
                 .sample_seq = sample_seq,
@@ -201,6 +228,12 @@ esp_err_t handheld_control_udp_start(
     s_control.session_id = esp_random();
     if (s_control.session_id == 0) {
         s_control.session_id = 1;
+    }
+
+    const esp_err_t button_result = handheld_buttons_init();
+    if (button_result != ESP_OK) {
+        memset(&s_control, 0, sizeof(s_control));
+        return button_result;
     }
 
     const BaseType_t created = xTaskCreate(

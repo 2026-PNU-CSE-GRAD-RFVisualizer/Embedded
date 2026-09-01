@@ -147,5 +147,12 @@ gcc -std=c11 -Wall -Wextra -Werror `
 정상 결과:
 
 ```text
-6/6 RFHC serializer tests passed; backend vector matched
+7/7 RFHC serializer tests passed; backend vector and button flags matched
 ```
+
+RFHC 송신을 켜면 GPIO17 텔레포트 버튼과 GPIO19 Height-cycle 버튼을 내부
+Pull-up의 active-low 입력으로 읽는다. 기존 50 Hz Control Task가 25 ms
+소프트웨어 debounce를 수행하며, 매 Packet에 현재 눌림 상태를 각각 `flags`
+bit1·bit2로 보낸다. `event_seq`는 항상 0이고 별도 버튼 Task나 Event 반복
+송신은 없다. GPIO19는 Native USB D-와 공유되므로 Flash/Monitor에는
+USB-to-UART 포트를 사용한다.
