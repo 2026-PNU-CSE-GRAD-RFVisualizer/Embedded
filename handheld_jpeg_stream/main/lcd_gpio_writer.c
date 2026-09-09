@@ -1,4 +1,6 @@
 #include "lcd_gpio_writer.h"
+#include "lcd_rgb666_pack.h"
+#include "esp_attr.h"
 
 #include <stdbool.h>
 #include <string.h>
@@ -34,6 +36,7 @@
 
 static const char *TAG = "lcd_gpio";
 static bool initialized;
+static DRAM_ATTR lcd_rgb666_lookup_t rgb565_lookup;
 static esp_lcd_i80_bus_handle_t i80_bus;
 static esp_lcd_panel_io_handle_t panel_io;
 static SemaphoreHandle_t dma_done;
@@ -747,25 +750,11 @@ esp_err_t lcd_gpio_writer_init(void)
     ESP_LOGI(TAG,
              "landscape 800x480, RGB666 packed stream: "
              "3 transfers / 2 pixels");
+    lcd_rgb666_lookup_init(&rgb565_lookup);
     initialized = true;
     return ESP_OK;
 }
 
-
-static inline void pack_rgb666_pair(uint16_t first_color, uint16_t second_color,
-                             uint16_t *output)
-{
-    const uint8_t r1 = rgb565_red8(first_color);
-    const uint8_t g1 = rgb565_green8(first_color);
-    const uint8_t b1 = rgb565_blue8(first_color);
-    const uint8_t r2 = rgb565_red8(second_color);
-    const uint8_t g2 = rgb565_green8(second_color);
-    const uint8_t b2 = rgb565_blue8(second_color);
-
-    output[0] = ((uint16_t)r1 << 8) | g1;
-    output[1] = ((uint16_t)b1 << 8) | r2;
-    output[2] = ((uint16_t)g2 << 8) | b2;
-}
 
 static esp_err_t dma_send_pixels(const uint16_t *pixels, uint16_t solid_color,
                                  bool solid, size_t pixel_count)
@@ -785,7 +774,8 @@ static esp_err_t dma_send_pixels(const uint16_t *pixels, uint16_t solid_color,
                 solid ? solid_color : pixels[input_base + i];
             const uint16_t second =
                 solid ? solid_color : pixels[input_base + i + 1U];
-            pack_rgb666_pair(first, second, &dma_frame[(i / 2U) * 3U]);
+            lcd_rgb666_pack_pair(&rgb565_lookup, first, second,
+                                &dma_frame[(i / 2U) * 3U]);
         }
         timing.pack += esp_timer_get_time() - pack_started;
         ESP_RETURN_ON_ERROR(dma_send_packed_stripe(stripe), TAG,

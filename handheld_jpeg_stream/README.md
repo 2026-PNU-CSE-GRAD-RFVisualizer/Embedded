@@ -211,3 +211,23 @@ App 854,848바이트, App partition 여유 44%. RFJF Host Test 5/5,
 RFHC Host Test 7/7 통과. 기존 디코더+직렬 DMA, RGB565 benchmark+BNO,
 Control UDP 각 구성의 주요 C 파일 4개는 `-Werror -fsyntax-only` 검사 통과
 (각 구성의 별도 전체 링크/Flash 시험을 의미하지 않음). 실물 FPS·색상·BNO 동시 안정성 미검증.
+
+
+### RGB565 packing 최적화 (2026-09-10)
+
+픽셀마다 수행하던 R/G/B 확장식을 두 개의 256-entry 변환표 조회로 교체했다.
+표는 내부 DRAM 2,048바이트를 사용하며, 입력 상위/하위 바이트가 기여하는
+RGB666 비트를 각각 저장한다. 해상도·색상 양자화·픽셀 순서·패널 전송량은
+변하지 않는다. RGB332/palette256의 기존 lookup 경로도 그대로 유지한다.
+
+`test/test_rgb666_pack_host.c`는 기존 변환식을 독립 기준으로 사용해 모든
+65,536가지 RGB565 색상을 픽셀 쌍의 양쪽 위치에서 검증하고, 보색 쌍과
+100,000개 추가 쌍 및 출력 버퍼 경계도 검사한다. 모든 결과는 비트 단위로 일치했다.
+
+```powershell
+gcc -std=c11 -O2 -Wall -Wextra -Werror -I main test/test_rgb666_pack_host.c -o test_rgb666_pack.exe
+.\test_rgb666_pack.exe
+```
+
+실물 속도 향상 폭은 미측정이다. 같은 영상·BNO/UDP 조건에서 이전 `pack` 약
+62 ms와 Flash 후 로그를 비교한다. 색상 변환의 수학적 동일성과 실물 속도는 별도 검증이다.
