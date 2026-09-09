@@ -11,3 +11,5 @@ esp_err_t jpeg_lcd_sink_render(const jpeg_stream_frame_t *frame);
 esp_err_t jpeg_lcd_sink_decode_rgb332(const jpeg_stream_frame_t *frame,
                                       uint8_t *output, size_t output_size);
 void jpeg_lcd_sink_release_decode_buffer(void);
+
+void jpeg_lcd_sink_benchmark(void);

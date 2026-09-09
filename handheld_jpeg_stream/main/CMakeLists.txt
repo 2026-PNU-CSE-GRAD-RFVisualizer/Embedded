@@ -20,6 +20,7 @@ set(main_component_requirements
         esp_wifi
         nvs_flash
         esp_jpeg
+        esp_new_jpeg
         esp_rom
 )
 
@@ -31,9 +32,10 @@ if(CONFIG_HANDHELD_LOCAL_10FPS_TEST)
     endif()
 endif()
 
-if(CONFIG_HANDHELD_LOCAL_BNO085_LCD_TEST OR CONFIG_HANDHELD_CONTROL_UDP)
+if(CONFIG_HANDHELD_LOCAL_BNO085_LCD_TEST OR CONFIG_HANDHELD_CONTROL_UDP OR CONFIG_HANDHELD_BNO085_SERVICE)
     list(APPEND component_sources "bno085_local_test.c")
 endif()
+
 
 idf_component_register(
     SRCS
@@ -55,4 +57,8 @@ if(CONFIG_HANDHELD_LOCAL_10FPS_TEST AND NOT CONFIG_HANDHELD_LOCAL_3D_TEST)
             BINARY
         )
     endforeach()
+endif()
+
+if(CONFIG_HANDHELD_RGB565_BENCHMARK)
+    target_add_binary_data(${COMPONENT_LIB} "test_animation/frames/frame_00.jpg" BINARY)
 endif()

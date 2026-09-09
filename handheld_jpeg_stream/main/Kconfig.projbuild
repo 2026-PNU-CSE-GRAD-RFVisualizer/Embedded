@@ -1,5 +1,30 @@
 menu "RFVisualizer handheld JPEG stream"
 
+config HANDHELD_NEW_JPEG
+    bool "Use esp_new_jpeg decoder (disable for TJpgDec comparison)"
+    default y
+
+config HANDHELD_LCD_PING_PONG
+    bool "Pack the next LCD stripe while DMA is active"
+    default y
+
+config HANDHELD_LCD_STRIPE_ROWS
+    int "LCD stripe rows (must divide 480)"
+    range 8 48
+    default 16
+
+config HANDHELD_BNO085_SERVICE
+    bool "Enable BNO085 independently of Control UDP"
+    default n
+
+config HANDHELD_RGB565_BENCHMARK
+    bool "Repeat one decoded RGB565 frame without pacing (no network)"
+    default n
+    depends on !HANDHELD_LOCAL_10FPS_TEST && !HANDHELD_CONTROL_UDP
+    help
+        Decodes one embedded 800x480 JPEG once, then measures the same LCD
+        path as network JPEG. Enable HANDHELD_BNO085_SERVICE for IMU load.
+
 config HANDHELD_LOCAL_BNO085_LCD_TEST
     bool "Run combined BNO085 + local LCD test"
     default n

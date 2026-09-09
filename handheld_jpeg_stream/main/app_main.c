@@ -3,6 +3,7 @@
 
 #include "esp_event.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "esp_netif.h"
 #include "esp_wifi.h"
 #include "freertos/FreeRTOS.h"
@@ -17,7 +18,7 @@
 #include "jpeg_stream_protocol.h"
 #include "rgb332_zlib_sink.h"
 #include "handheld_control_udp.h"
-#if CONFIG_HANDHELD_LOCAL_BNO085_LCD_TEST || CONFIG_HANDHELD_CONTROL_UDP
+#if CONFIG_HANDHELD_LOCAL_BNO085_LCD_TEST || CONFIG_HANDHELD_CONTROL_UDP || CONFIG_HANDHELD_BNO085_SERVICE
 #include "bno085_local_test.h"
 #endif
 #if CONFIG_HANDHELD_LOCAL_10FPS_TEST
@@ -112,12 +113,34 @@ static void wifi_start(void)
 static void on_jpeg_frame(const jpeg_stream_frame_t *frame, void *user_context)
 {
     (void)user_context;
+    static int64_t window_start;
+    static uint32_t displayed, failed;
+    static jpeg_stream_client_stats_t previous;
+    const int64_t started = esp_timer_get_time();
+    if (!window_start) window_start = started;
     esp_err_t result;
     if (frame->flags == JPEG_STREAM_FLAG_RGB332_ZLIB ||
         frame->flags == JPEG_STREAM_FLAG_PALETTE256_ZLIB) {
         result = rgb332_zlib_sink_render(frame);
     } else {
         result = jpeg_lcd_sink_render(frame);
+    }
+    if (result == ESP_OK) ++displayed;
+    else ++failed;
+    const int64_t now = esp_timer_get_time();
+    if (now - window_start >= 1000000) {
+        jpeg_stream_client_stats_t current;
+        jpeg_stream_client_get_stats(&current);
+        const double seconds = (now - window_start) / 1000000.0;
+        ESP_LOGI(TAG, "stream rx_fps=%.2f display_fps=%.2f stale=%lu gaps=%lu failed=%lu",
+                 (current.frames_received - previous.frames_received) / seconds,
+                 displayed / seconds,
+                 (unsigned long)(current.stale_frames_dropped - previous.stale_frames_dropped),
+                 (unsigned long)(current.sequence_gaps - previous.sequence_gaps),
+                 (unsigned long)failed);
+        previous = current;
+        displayed = failed = 0;
+        window_start = now;
     }
     if (result != ESP_OK) {
         ESP_LOGW(TAG, "frame seq=%lu was not displayed: %s",
@@ -135,7 +158,7 @@ void app_main(void)
     }
     ESP_ERROR_CHECK(nvs_result);
 
-#if CONFIG_HANDHELD_LOCAL_10FPS_TEST
+#if CONFIG_HANDHELD_LOCAL_10FPS_TEST || CONFIG_HANDHELD_RGB565_BENCHMARK
     const bool lcd_enabled = true;
 #else
     const bool lcd_enabled = CONFIG_JPEG_STREAM_SERVER_HOST[0] != '\0';
@@ -147,7 +170,7 @@ void app_main(void)
     }
     // show_boot_color_test();  // Disabled while testing server RGB332 frames.
 
-#if CONFIG_HANDHELD_LOCAL_BNO085_LCD_TEST || CONFIG_HANDHELD_CONTROL_UDP
+#if CONFIG_HANDHELD_LOCAL_BNO085_LCD_TEST || CONFIG_HANDHELD_CONTROL_UDP || CONFIG_HANDHELD_BNO085_SERVICE
     ESP_ERROR_CHECK(bno085_local_test_start());
     if (lcd_enabled) {
         lcd_gpio_writer_set_transfer_gate(bno085_local_test_lcd_begin,
@@ -156,6 +179,10 @@ void app_main(void)
     } else {
         ESP_LOGI(TAG, "BNO085 service started without LCD I/O");
     }
+#endif
+
+#if CONFIG_HANDHELD_RGB565_BENCHMARK
+    jpeg_lcd_sink_benchmark();
 #endif
 
 #if CONFIG_HANDHELD_LOCAL_10FPS_TEST

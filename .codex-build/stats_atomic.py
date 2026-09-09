@@ -1,0 +1,3 @@
+from pathlib import Path
+import re
+p=Path('handheld_jpeg_stream/main/jpeg_stream_client.c');s=p.read_text();s=re.sub(r's_client.stats\.(\w+)\+\+;',r'__atomic_fetch_add(&s_client.stats.\1, 1U, __ATOMIC_RELAXED);',s);s=s.replace('s_client.stats.sequence_gaps += delta - 1;', '__atomic_fetch_add(&s_client.stats.sequence_gaps, delta - 1U, __ATOMIC_RELAXED);');fields=['frames_received','stale_frames_dropped','sequence_gaps','invalid_jpegs','invalid_payloads','stream_errors','reconnects'];s=s.replace('        *out = s_client.stats;', '        /* Per-counter atomic samples; this is not a transactional snapshot. */\n'+'\n'.join(f'        out->{f} = __atomic_load_n(&s_client.stats.{f}, __ATOMIC_RELAXED);' for f in fields));p.write_text(s)

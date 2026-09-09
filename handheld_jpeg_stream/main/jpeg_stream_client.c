@@ -142,7 +142,7 @@ static int acquire_receive_buffer(void)
     }
 
     if (xQueueReceive(s_client.ready_frames, &index, 0) == pdTRUE) {
-        s_client.stats.stale_frames_dropped++;
+        __atomic_fetch_add(&s_client.stats.stale_frames_dropped, 1U, __ATOMIC_RELAXED);
         return index;
     }
 
@@ -159,7 +159,7 @@ static void publish_latest(int index)
 {
     int stale_index = -1;
     if (xQueueReceive(s_client.ready_frames, &stale_index, 0) == pdTRUE) {
-        s_client.stats.stale_frames_dropped++;
+        __atomic_fetch_add(&s_client.stats.stale_frames_dropped, 1U, __ATOMIC_RELAXED);
         release_buffer(stale_index);
     }
     xQueueSend(s_client.ready_frames, &index, portMAX_DELAY);
@@ -178,7 +178,7 @@ static bool receive_one_frame(int sock, uint32_t *last_seq, bool *have_seq)
     if (result != JPEG_STREAM_HEADER_OK) {
         ESP_LOGW(TAG, "invalid frame header: %s",
                  jpeg_stream_header_result_name(result));
-        s_client.stats.stream_errors++;
+        __atomic_fetch_add(&s_client.stats.stream_errors, 1U, __ATOMIC_RELAXED);
         return false;
     }
 
@@ -198,9 +198,9 @@ static bool receive_one_frame(int sock, uint32_t *last_seq, bool *have_seq)
                  header.flags,
                  (unsigned long)header.payload_length);
         if (header.flags == JPEG_STREAM_FLAG_JPEG) {
-            s_client.stats.invalid_jpegs++;
+            __atomic_fetch_add(&s_client.stats.invalid_jpegs, 1U, __ATOMIC_RELAXED);
         } else {
-            s_client.stats.invalid_payloads++;
+            __atomic_fetch_add(&s_client.stats.invalid_payloads, 1U, __ATOMIC_RELAXED);
         }
         release_buffer(index);
         return true;
@@ -209,13 +209,13 @@ static bool receive_one_frame(int sock, uint32_t *last_seq, bool *have_seq)
     if (*have_seq) {
         const uint32_t delta = header.seq - *last_seq;
         if (delta > 1 && delta < 0x80000000u) {
-            s_client.stats.sequence_gaps += delta - 1;
+            __atomic_fetch_add(&s_client.stats.sequence_gaps, delta - 1U, __ATOMIC_RELAXED);
         }
     }
     *last_seq = header.seq;
     *have_seq = true;
-    s_client.stats.frames_received++;
-    ESP_LOGI(TAG, "received seq=%lu flags=%u payload=%lu B",
+    __atomic_fetch_add(&s_client.stats.frames_received, 1U, __ATOMIC_RELAXED);
+    ESP_LOGD(TAG, "received seq=%lu flags=%u payload=%lu B",
              (unsigned long)header.seq, header.flags,
              (unsigned long)header.payload_length);
     publish_latest(index);
@@ -238,7 +238,7 @@ static void receiver_task(void *argument)
             continue;
         }
 
-        s_client.stats.reconnects++;
+        __atomic_fetch_add(&s_client.stats.reconnects, 1U, __ATOMIC_RELAXED);
         backoff_ms = s_client.reconnect_initial_ms;
         ESP_LOGI(TAG, "connected to image relay viewer port");
         uint32_t last_seq = 0;
@@ -246,7 +246,7 @@ static void receiver_task(void *argument)
         while (receive_one_frame(sock, &last_seq, &have_seq)) {
         }
 
-        s_client.stats.stream_errors++;
+        __atomic_fetch_add(&s_client.stats.stream_errors, 1U, __ATOMIC_RELAXED);
         shutdown(sock, SHUT_RDWR);
         close(sock);
         ESP_LOGW(TAG, "stream disconnected; reconnecting in %lu ms",
@@ -329,6 +329,13 @@ esp_err_t jpeg_stream_client_start(const jpeg_stream_client_config_t *config)
 void jpeg_stream_client_get_stats(jpeg_stream_client_stats_t *out)
 {
     if (out != NULL) {
-        *out = s_client.stats;
+        /* Per-counter atomic samples; this is not a transactional snapshot. */
+        out->frames_received = __atomic_load_n(&s_client.stats.frames_received, __ATOMIC_RELAXED);
+        out->stale_frames_dropped = __atomic_load_n(&s_client.stats.stale_frames_dropped, __ATOMIC_RELAXED);
+        out->sequence_gaps = __atomic_load_n(&s_client.stats.sequence_gaps, __ATOMIC_RELAXED);
+        out->invalid_jpegs = __atomic_load_n(&s_client.stats.invalid_jpegs, __ATOMIC_RELAXED);
+        out->invalid_payloads = __atomic_load_n(&s_client.stats.invalid_payloads, __ATOMIC_RELAXED);
+        out->stream_errors = __atomic_load_n(&s_client.stats.stream_errors, __ATOMIC_RELAXED);
+        out->reconnects = __atomic_load_n(&s_client.stats.reconnects, __ATOMIC_RELAXED);
     }
 }

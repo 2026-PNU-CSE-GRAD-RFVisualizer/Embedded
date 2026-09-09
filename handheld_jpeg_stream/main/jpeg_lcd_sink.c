@@ -9,14 +9,22 @@
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_timer.h"
+#if CONFIG_HANDHELD_NEW_JPEG
+#include "esp_jpeg_dec.h"
+#else
 #include "jpeg_decoder.h"
+#endif
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 
 #include "lcd_board_config.h"
 #include "lcd_gpio_writer.h"
 
 static const char *TAG = "jpeg_lcd";
 static uint16_t *s_rgb565_frame;
+#if !CONFIG_HANDHELD_NEW_JPEG
 static uint8_t *s_jpeg_work_buffer;
+#endif
 static bool s_initialized;
 
 #define JPEG_WORK_BUFFER_BYTES (16U * 1024U)
@@ -64,6 +72,7 @@ esp_err_t jpeg_lcd_sink_init(void)
                         "failed to allocate %u-byte RGB565 PSRAM frame",
                         (unsigned)RGB565_FRAME_BYTES);
 
+#if !CONFIG_HANDHELD_NEW_JPEG
     /* esp_jpeg's automatic 3.1 kB scratch allocation is too small for the
      * external decoder configured for RGB565 and some optimized Huffman
      * tables. Keep one internal-RAM work buffer and reuse it every frame. */
@@ -74,16 +83,22 @@ esp_err_t jpeg_lcd_sink_init(void)
                         "failed to allocate %u-byte JPEG work buffer",
                         (unsigned)JPEG_WORK_BUFFER_BYTES);
 
+#endif
+
     ESP_RETURN_ON_ERROR(lcd_gpio_writer_init(), TAG,
                         "NT35510 initialization failed");
     lcd_gpio_writer_fill(0x0000);
     gpio_set_level(LCD_PIN_BL, LCD_BL_ON_LEVEL);
     s_initialized = true;
 
+#if CONFIG_HANDHELD_NEW_JPEG
+    const char *decoder_name = "esp_new_jpeg 1.0.2";
+#else
+    const char *decoder_name = "esp_jpeg 1.3.1";
+#endif
     ESP_LOGI(TAG, "LCD ready: landscape=%ux%u, "
-             "RGB565 buffer=%u bytes in PSRAM, JPEG work=%u bytes internal",
-             LCD_H_RES, LCD_V_RES, (unsigned)RGB565_FRAME_BYTES,
-             (unsigned)JPEG_WORK_BUFFER_BYTES);
+             "RGB565 buffer=%u bytes in PSRAM, decoder=%s",
+             LCD_H_RES, LCD_V_RES, (unsigned)RGB565_FRAME_BYTES, decoder_name);
     return ESP_OK;
 }
 
@@ -98,6 +113,55 @@ static esp_err_t decode_rgb565(const jpeg_stream_frame_t *frame,
                         frame->jpeg_length > 0,
                         ESP_ERR_INVALID_ARG, TAG, "empty JPEG frame");
 
+#if CONFIG_HANDHELD_NEW_JPEG
+    jpeg_dec_config_t config = DEFAULT_JPEG_DEC_CONFIG();
+    config.output_type = JPEG_PIXEL_FORMAT_RGB565_LE;
+    jpeg_dec_handle_t decoder = NULL;
+    const int64_t start_us = esp_timer_get_time();
+    jpeg_error_t status = jpeg_dec_open(&config, &decoder);
+    ESP_RETURN_ON_FALSE(status == JPEG_ERR_OK, ESP_FAIL, TAG,
+                        "JPEG open failed: %d", status);
+    jpeg_dec_io_t io = {
+        .inbuf = (uint8_t *)frame->jpeg,
+        .inbuf_len = (int)frame->jpeg_length,
+        .outbuf = (uint8_t *)s_rgb565_frame,
+    };
+    jpeg_dec_header_info_t header = {0};
+    esp_err_t result = ESP_FAIL;
+    status = jpeg_dec_parse_header(decoder, &io, &header);
+    if (status != JPEG_ERR_OK) {
+        goto decode_done;
+    }
+    int required = 0;
+    status = jpeg_dec_get_outbuf_len(decoder, &required);
+    if (status != JPEG_ERR_OK || required <= 0 ||
+        (size_t)required > RGB565_FRAME_BYTES ||
+        header.width == 0 || header.height == 0 ||
+        header.width > LCD_H_RES || header.height > LCD_V_RES) {
+        result = ESP_ERR_INVALID_SIZE;
+        goto decode_done;
+    }
+    status = jpeg_dec_process(decoder, &io);
+    if (status == JPEG_ERR_OK) {
+        if (io.out_size != (int)((size_t)header.width * header.height * 2U)) {
+            result = ESP_ERR_INVALID_SIZE;
+            goto decode_done;
+        }
+        if (header.width != LCD_H_RES || header.height != LCD_V_RES) {
+            upscale_rgb565_in_place(header.width, header.height);
+        }
+        result = ESP_OK;
+    }
+decode_done:
+    jpeg_dec_close(decoder);
+    *decode_elapsed_us = esp_timer_get_time() - start_us;
+    if (result != ESP_OK) {
+        ESP_LOGW(TAG, "seq=%lu JPEG failed: codec=%d result=%s",
+                 (unsigned long)frame->seq, status, esp_err_to_name(result));
+    }
+    return result;
+#else
+    const int64_t decode_start_us = esp_timer_get_time();
     esp_jpeg_image_cfg_t info_config = {
         .indata = (uint8_t *)frame->jpeg,
         .indata_size = frame->jpeg_length,
@@ -144,9 +208,7 @@ static esp_err_t decode_rgb565(const jpeg_stream_frame_t *frame,
         },
     };
     esp_jpeg_image_output_t decoded = {0};
-    const int64_t decode_start_us = esp_timer_get_time();
     result = esp_jpeg_decode(&decode_config, &decoded);
-    *decode_elapsed_us = esp_timer_get_time() - decode_start_us;
     ESP_RETURN_ON_ERROR(result, TAG,
                         "seq=%lu JPEG decode failed",
                         (unsigned long)frame->seq);
@@ -164,12 +226,14 @@ static esp_err_t decode_rgb565(const jpeg_stream_frame_t *frame,
 
     if (decoded.width != LCD_H_RES || decoded.height != LCD_V_RES) {
         upscale_rgb565_in_place(decoded.width, decoded.height);
-        ESP_LOGI(TAG, "seq=%lu scaled %ux%u -> %ux%u",
+        ESP_LOGD(TAG, "seq=%lu scaled %ux%u -> %ux%u",
                  (unsigned long)frame->seq,
                  decoded.width, decoded.height, LCD_H_RES, LCD_V_RES);
     }
 
+    *decode_elapsed_us = esp_timer_get_time() - decode_start_us;
     return ESP_OK;
+#endif
 }
 
 esp_err_t jpeg_lcd_sink_render(const jpeg_stream_frame_t *frame)
@@ -185,7 +249,24 @@ esp_err_t jpeg_lcd_sink_render(const jpeg_stream_frame_t *frame)
     ESP_RETURN_ON_ERROR(result, TAG, "seq=%lu LCD draw failed",
                         (unsigned long)frame->seq);
 
-    ESP_LOGI(TAG, "displayed seq=%lu, jpeg=%u B, decode=%lld ms, draw=%lld ms",
+    static int64_t window_start, decode_sum, decode_max, draw_sum, draw_max;
+    static unsigned count;
+    if (!window_start) window_start = draw_start_us - decode_elapsed_us;
+    decode_sum += decode_elapsed_us;
+    draw_sum += draw_elapsed_us;
+    if (decode_elapsed_us > decode_max) decode_max = decode_elapsed_us;
+    if (draw_elapsed_us > draw_max) draw_max = draw_elapsed_us;
+    ++count;
+    const int64_t now = esp_timer_get_time();
+    if (now - window_start >= 1000000) {
+        ESP_LOGI(TAG, "JPEG decode_avg/max=%.2f/%.2f ms draw_avg/max=%.2f/%.2f ms n=%u",
+                 decode_sum / (count * 1000.0), decode_max / 1000.0,
+                 draw_sum / (count * 1000.0), draw_max / 1000.0, count);
+        window_start = now;
+        count = 0;
+        decode_sum = decode_max = draw_sum = draw_max = 0;
+    }
+    ESP_LOGD(TAG, "displayed seq=%lu, jpeg=%u B, decode=%lld ms, draw=%lld ms",
              (unsigned long)frame->seq,
              (unsigned)frame->jpeg_length,
              (long long)(decode_elapsed_us / 1000),
@@ -225,3 +306,19 @@ void jpeg_lcd_sink_release_decode_buffer(void)
         ESP_LOGI(TAG, "released RGB565 JPEG decode buffer after caching");
     }
 }
+
+#if CONFIG_HANDHELD_RGB565_BENCHMARK
+void jpeg_lcd_sink_benchmark(void)
+{
+    extern const uint8_t start[] asm("_binary_frame_00_jpg_start");
+    extern const uint8_t end[] asm("_binary_frame_00_jpg_end");
+    const jpeg_stream_frame_t frame = {.jpeg = start, .jpeg_length = end - start};
+    int64_t decode_us;
+    ESP_ERROR_CHECK(decode_rgb565(&frame, &decode_us));
+    ESP_LOGI(TAG, "RGB565 LCD-only benchmark: decoded once, no pacing");
+    for (;;) {
+        ESP_ERROR_CHECK(lcd_gpio_writer_draw(s_rgb565_frame, RGB565_PIXEL_COUNT));
+        taskYIELD();
+    }
+}
+#endif

@@ -1,0 +1,2 @@
+from pathlib import Path
+p=Path('handheld_jpeg_stream/main/lcd_gpio_writer.c');s=p.read_text().replace('static int64_t dma_started_us;','static int64_t dma_started_us;\nstatic volatile int64_t dma_completed_us;');s=s.replace('    xSemaphoreGiveFromISR(done, &task_woken);','    dma_completed_us = esp_timer_get_time();\n    xSemaphoreGiveFromISR(done, &task_woken);');s=s.replace('timing.transfer += now - dma_started_us;', 'timing.transfer += dma_completed_us - dma_started_us;');p.write_text(s,encoding='utf-8')

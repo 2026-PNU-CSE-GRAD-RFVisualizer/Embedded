@@ -88,7 +88,7 @@ esp_err_t rgb332_zlib_sink_render(const jpeg_stream_frame_t *frame)
     ESP_RETURN_ON_ERROR(draw_result, TAG, "indexed DMA draw failed");
     const int64_t draw_elapsed_us = esp_timer_get_time() - draw_start_us;
 
-    ESP_LOGI(TAG,
+    ESP_LOGD(TAG,
              "displayed seq=%lu format=%s, compressed=%u B, inflate=%lld ms, "
              "draw=%lld ms, total=%lld ms",
              (unsigned long)frame->seq, format_name,
